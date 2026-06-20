@@ -640,17 +640,22 @@ func handle_seven_click() -> void:
 		hovered_special_card = null
 		return
 
+	var source_card := selected_source_card
 	var target_card := hovered_special_card
 
-	await animate_swap_player_cards(
-		selected_source_card,
-		target_card
-	)
+	turn_state = TurnState.ANIMATING
 
-	selected_source_card.set_special_selected(false)
+	source_card.set_special_selected(false)
+	source_card.set_drag_hovered(false)
+	target_card.set_drag_hovered(false)
 
 	selected_source_card = null
 	hovered_special_card = null
+
+	await animate_swap_player_cards(
+		source_card,
+		target_card
+	)
 
 	remove_special_overlay()
 

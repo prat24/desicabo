@@ -8,13 +8,13 @@ script = ExtResource("1_vutb1")
 back_texture = ExtResource("1_84gl2")
 
 [node name="Shadow" type="Sprite2D" parent="." unique_id=1982272289]
+modulate = Color(0, 0, 0, 0.32)
 z_index = -1
 position = Vector2(5, 9)
-modulate = Color(0, 0, 0, 0.32)
-scale = Vector2(1.8857143, 1.8857143)
+scale = Vector2(2, 2)
 texture = ExtResource("1_84gl2")
 
 [node name="Sprite2D" type="Sprite2D" parent="." unique_id=1623482511]
 position = Vector2(-2.842171e-14, 2.842171e-14)
-scale = Vector2(1.8857143, 1.8857143)
+scale = Vector2(2, 2)
 texture = ExtResource("1_84gl2")

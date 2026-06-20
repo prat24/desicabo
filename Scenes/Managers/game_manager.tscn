@@ -34,7 +34,7 @@ player_id = 2
 
 [node name="DeckSprite" type="Sprite2D" parent="." unique_id=815075980]
 position = Vector2(150, 960)
-scale = Vector2(2.1, 2.1)
+scale = Vector2(2, 2)
 texture = ExtResource("4_j1mdm")
 
 [node name="CenterDrawCard" parent="." unique_id=1108670356 instance=ExtResource("2_il670")]
@@ -43,7 +43,7 @@ position = Vector2(540, 960)
 
 [node name="DiscardPileSprite" type="Sprite2D" parent="." unique_id=1257155411]
 position = Vector2(930, 960)
-scale = Vector2(2.1, 2.1)
+scale = Vector2(2, 2)
 texture = ExtResource("6_xbfc7")
 
 [node name="DiscardTopCard" parent="." unique_id=88107710 instance=ExtResource("2_il670")]

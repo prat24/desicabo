@@ -4,7 +4,7 @@
 [ext_resource type="Texture2D" uid="uid://2isylkgo0dnu" path="res://Assets/Art/PNG/Cards/cardBack_main.png" id="3_3sxif"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_2nti4"]
-size = Vector2(257, 350)
+size = Vector2(132, 191)
 
 [sub_resource type="Animation" id="Animation_dpxgs"]
 resource_name = "flip_to_front"
@@ -24,7 +24,7 @@ tracks/0/keys = {
 
 [sub_resource type="AnimationLibrary" id="AnimationLibrary_8wj8q"]
 _data = {
-"flip_to_front": SubResource("Animation_dpxgs")
+&"flip_to_front": SubResource("Animation_dpxgs")
 }
 
 [node name="Card" type="Node2D" unique_id=1832272288]
@@ -32,27 +32,26 @@ script = ExtResource("1_ws51j")
 back_texture = ExtResource("3_3sxif")
 
 [node name="Shadow" type="Sprite2D" parent="." unique_id=1982272290]
+modulate = Color(0, 0, 0, 0.32)
 z_index = -1
 position = Vector2(5, 9)
-modulate = Color(0, 0, 0, 0.32)
-scale = Vector2(1.8857143, 1.8857143)
+scale = Vector2(2, 2)
 texture = ExtResource("3_3sxif")
 
 [node name="Sprite2D" type="Sprite2D" parent="." unique_id=1623482511]
 position = Vector2(-2.842171e-14, 2.842171e-14)
-scale = Vector2(1.8857143, 1.8857143)
+scale = Vector2(2, 2)
 texture = ExtResource("3_3sxif")
 
 [node name="Area2D" type="Area2D" parent="." unique_id=1492354595]
+scale = Vector2(2, 2)
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Area2D" unique_id=1256057276]
-position = Vector2(0.5, 0)
+position = Vector2(0, 1.5)
 shape = SubResource("RectangleShape2D_2nti4")
 
-[node name="AnimationPlayer" type="AnimationPlayer" parent="."]
-libraries = {
-"": SubResource("AnimationLibrary_8wj8q")
-}
+[node name="AnimationPlayer" type="AnimationPlayer" parent="." unique_id=108162510]
+libraries/ = SubResource("AnimationLibrary_8wj8q")
 
 [connection signal="mouse_entered" from="Area2D" to="." method="_on_area_2d_mouse_entered"]
 [connection signal="mouse_exited" from="Area2D" to="." method="_on_area_2d_mouse_exited"]
