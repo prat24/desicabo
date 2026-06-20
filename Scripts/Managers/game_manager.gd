@@ -11,10 +11,11 @@ const SNAP_TIME = 0.18
 @export_range(0.05, 1.5, 0.01) var player_card_flip_time: float = 0.24
 
 enum TurnState {
-	DEALING,          ## A new card is animating from deck to center.
-	WAITING_FOR_DROP, ## Active player may drag the center card.
-	ANIMATING,        ## Post-drop animation is in progress.
-	GAME_OVER         ## Deck is exhausted.
+	DEALING,
+	WAITING_FOR_DROP,
+	ANIMATING,
+	SPECIAL_7,
+	GAME_OVER
 }
 
 var dragged_card: Node2D
@@ -28,6 +29,10 @@ var discard_pile_position: Vector2 = Vector2.ZERO
 var intro_dim_overlay: ColorRect
 var current_player: int = 1        ## 1 or 2 — whose turn it is.
 var player2_revealed: bool = false ## True once Player 2 has seen their hand reveal.
+var special_overlay: ColorRect
+var selected_source_card: PlayerCard = null
+var hovered_special_card: PlayerCard = null
+var seven_selecting_opponent: bool = false
 
 # ── Scene references ──────────────────────────────────────────────────────────
 @onready var deck_sprite: Sprite2D = $DeckSprite
@@ -51,7 +56,6 @@ func _ready() -> void:
 	player2_hand.deal_from_deck(deck)
 	await run_pre_game_hand_reveal()
 	await start_turn()
-
 
 func run_pre_game_hand_reveal() -> void:
 	await run_hand_reveal(player1_hand)
@@ -108,6 +112,10 @@ func dim_for_hand_reveal(active_hand: PlayerHand, dimmed: bool) -> void:
 
 
 func _process(_delta: float) -> void:
+	if turn_state == TurnState.SPECIAL_7:
+		update_seven_hover()
+		return
+
 	if dragged_card == null:
 		return
 
@@ -129,6 +137,12 @@ func _process(_delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if turn_state == TurnState.SPECIAL_7:
+		if event is InputEventMouseButton:
+			if event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+				await handle_seven_click()
+		return
+
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
 			var card := check_card_click()
@@ -320,8 +334,27 @@ func start_turn() -> void:
 
 	turn_state = TurnState.DEALING
 	await deal_center_draw_card()
-	turn_state = TurnState.WAITING_FOR_DROP
+	await _check_special_card_effect()
+	if turn_state != TurnState.SPECIAL_7:
+		turn_state = TurnState.WAITING_FOR_DROP
 
+
+## Queen: reveal the active player's own hand.
+## King: reveal the other player's hand.
+## Jack: jumble the other player's cards randomly.
+func _check_special_card_effect() -> void:
+	match center_draw_card.rank:
+		"Q":
+			await run_hand_reveal(get_active_hand())
+
+		"K":
+			await run_hand_reveal(get_other_hand())
+
+		"J":
+			await get_other_hand().jumble_cards()
+
+		"7":
+			await run_seven_swap_power()
 
 func deal_center_draw_card() -> void:
 	var card_data: Dictionary = deck.pop_front()
@@ -433,6 +466,169 @@ func copy_draw_card_to_discard(card: BoardCard) -> void:
 func is_card_over_discard_pile(card: Node2D) -> bool:
 	return get_overlap_area(get_card_global_rect(card), get_sprite_global_rect(discard_pile_sprite)) > 0.0
 
+func create_special_overlay() -> void:
+	if special_overlay:
+		return
+
+	special_overlay = ColorRect.new()
+	special_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	special_overlay.color = Color(0, 0, 0, 0.65)
+	special_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	special_overlay.z_index = 150
+
+	add_child(special_overlay)
+
+
+func remove_special_overlay() -> void:
+	if special_overlay:
+		special_overlay.queue_free()
+		special_overlay = null
+
+
+func set_hand_enabled(hand: PlayerHand, enabled: bool) -> void:
+	for card in hand.cards:
+		card.modulate = Color.WHITE if enabled else Color(0.35, 0.35, 0.35)
+
+
+func run_seven_swap_power() -> void:
+	turn_state = TurnState.SPECIAL_7
+
+	selected_source_card = null
+	hovered_special_card = null
+	seven_selecting_opponent = false
+
+	create_special_overlay()
+
+	set_hand_enabled(get_active_hand(), true)
+	set_hand_enabled(get_other_hand(), false)
+
+	while turn_state == TurnState.SPECIAL_7:
+		await get_tree().process_frame
+
+
+func update_seven_hover() -> void:
+	var hand := get_other_hand() if seven_selecting_opponent else get_active_hand()
+
+	var mouse_position := get_global_mouse_position()
+
+	var new_hover: PlayerCard = null
+	var highest_z := -9999
+
+	for card in hand.cards:
+		if card.get_collision_rect().has_point(mouse_position):
+			if card.z_index > highest_z:
+				highest_z = card.z_index
+				new_hover = card
+
+	if hovered_special_card == new_hover:
+		return
+
+	if hovered_special_card:
+		if hovered_special_card != selected_source_card:
+			hovered_special_card.set_drag_hovered(false)
+
+	hovered_special_card = new_hover
+
+	if hovered_special_card:
+		if hovered_special_card != selected_source_card:
+			hovered_special_card.set_drag_hovered(true)
+
+
+func handle_seven_click() -> void:
+	if hovered_special_card == null:
+		return
+
+	if !seven_selecting_opponent:
+		selected_source_card = hovered_special_card
+		selected_source_card.set_special_selected(true)
+
+		set_hand_enabled(get_active_hand(), false)
+		set_hand_enabled(get_other_hand(), true)
+
+		seven_selecting_opponent = true
+
+		hovered_special_card = null
+		return
+
+	var target_card := hovered_special_card
+
+	await animate_swap_player_cards(
+		selected_source_card,
+		target_card
+	)
+
+	selected_source_card.set_special_selected(false)
+
+	selected_source_card = null
+	hovered_special_card = null
+
+	remove_special_overlay()
+
+	set_hand_enabled(player1_hand, true)
+	set_hand_enabled(player2_hand, true)
+
+	turn_state = TurnState.WAITING_FOR_DROP
+
+
+func animate_swap_player_cards(
+	first: PlayerCard,
+	second: PlayerCard
+) -> void:
+
+	var first_data := get_player_card_data(first)
+	var second_data := get_player_card_data(second)
+
+	var first_global := first.global_position
+	var second_global := second.global_position
+
+	first.z_index = 200
+	second.z_index = 200
+
+	var tween := create_tween().set_parallel(true)
+
+	tween.tween_property(
+		first,
+		"global_position",
+		second_global,
+		0.4
+	).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+
+	tween.tween_property(
+		second,
+		"global_position",
+		first_global,
+		0.4
+	).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+
+	await tween.finished
+
+	first.setup_card(
+		second_data["rank"],
+		second_data["suit"],
+		second_data["texture"]
+	)
+
+	second.setup_card(
+		first_data["rank"],
+		first_data["suit"],
+		first_data["texture"]
+	)
+
+	first.show_back()
+	second.show_back()
+
+	first.set_special_selected(false)
+
+	player1_hand.arrange_cards()
+	player2_hand.arrange_cards()
+
+
+func get_active_hand() -> PlayerHand:
+	return player1_hand if current_player == 1 else player2_hand
+
+
+func get_other_hand() -> PlayerHand:
+	return player2_hand if current_player == 1 else player1_hand
 
 func get_player_card_data(player_card: PlayerCard) -> Dictionary:
 	return {

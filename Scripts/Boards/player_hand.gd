@@ -91,3 +91,49 @@ func _screen_size() -> Vector2:
 func _refresh() -> void:
 	if is_node_ready():
 		arrange_cards()
+
+
+## Animate all cards flying to shuffled positions and swap their underlying data.
+## Called when the active player draws a Jack (affects the opponent's hand).
+func jumble_cards() -> void:
+	var count := cards.size()
+	if count < 2:
+		return
+
+	# Snapshot positions and data before anything moves.
+	var rest_positions: Array[Vector2] = []
+	var card_data: Array[Dictionary] = []
+	for card in cards:
+		rest_positions.append(card.resting_position)
+		card_data.append({"rank": card.rank, "suit": card.suit, "texture": card.front_texture})
+
+	# Build a shuffled index mapping (guaranteed to change at least one card).
+	var new_order: Array = range(count)
+	new_order.shuffle()
+	var all_fixed := true
+	for idx in range(count):
+		if new_order[idx] != idx:
+			all_fixed = false
+			break
+	if all_fixed:
+		new_order[0] = 1
+		new_order[1] = 0
+
+	# Fly all cards to their new slot positions simultaneously.
+	for card in cards:
+		card.z_index = 50
+	var fly := create_tween().set_parallel(true)
+	for idx in range(count):
+		fly.tween_property(cards[idx], "position", rest_positions[new_order[idx]], 0.45) \
+		   .set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	await fly.finished
+
+	# Apply shuffled data and restore card state.
+	for idx in range(count):
+		cards[idx].setup_card(
+			card_data[new_order[idx]]["rank"],
+			card_data[new_order[idx]]["suit"],
+			card_data[new_order[idx]]["texture"]
+		)
+		cards[idx].show_back()
+	arrange_cards()

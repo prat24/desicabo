@@ -14,6 +14,7 @@ var is_face_down: bool = true
 var resting_position: Vector2 = Vector2.ZERO
 var resting_z_index: int = 0
 var is_drag_hovered: bool = false
+var is_special_selected: bool = false
 var drag_hover_tween: Tween
 var player_id: int = 1
 var hover_lift_sign: float = 1.0
@@ -74,6 +75,9 @@ func set_resting_z_index(new_z_index: int) -> void:
 	if !is_drag_hovered:
 		z_index = resting_z_index
 
+func set_special_selected(selected: bool) -> void:
+	is_special_selected = selected
+	set_drag_hovered(selected)
 
 func set_drag_hovered(hovered: bool) -> void:
 	if is_drag_hovered == hovered:
@@ -85,6 +89,7 @@ func set_drag_hovered(hovered: bool) -> void:
 		drag_hover_tween.kill()
 
 	var target_position: Vector2 = resting_position
+
 	if hovered:
 		target_position.y -= drag_hover_lift * hover_lift_sign
 		z_index = 100
@@ -92,7 +97,12 @@ func set_drag_hovered(hovered: bool) -> void:
 		z_index = resting_z_index
 
 	drag_hover_tween = create_tween()
-	drag_hover_tween.tween_property(self, "position", target_position, drag_hover_time)
+	drag_hover_tween.tween_property(
+		self,
+		"position",
+		target_position,
+		drag_hover_time
+	)
 
 
 func get_collision_rect() -> Rect2:
