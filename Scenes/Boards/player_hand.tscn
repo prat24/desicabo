@@ -1,0 +1,27 @@
+[gd_scene load_steps=3 format=3 uid="uid://ix20fy68m46w"]
+
+[ext_resource type="Script" uid="uid://dmx8ooic0ao2m" path="res://Scripts/Boards/player_hand.gd" id="1_dee3m"]
+[ext_resource type="PackedScene" uid="uid://cy7el7euroygw" path="res://Scenes/Cards/player_card.tscn" id="2_7v2tf"]
+
+[node name="PlayerHand" type="Node2D" unique_id=304696810]
+script = ExtResource("1_dee3m")
+
+[node name="PlayerCard1" parent="." instance=ExtResource("2_7v2tf")]
+position = Vector2(262.5, 1780)
+rotation = -0.174533
+scale = Vector2(1.18, 1.18)
+
+[node name="PlayerCard2" parent="." instance=ExtResource("2_7v2tf")]
+position = Vector2(447.5, 1717.778)
+rotation = -0.0581776
+scale = Vector2(1.18, 1.18)
+
+[node name="PlayerCard3" parent="." instance=ExtResource("2_7v2tf")]
+position = Vector2(632.5, 1717.778)
+rotation = 0.0581776
+scale = Vector2(1.18, 1.18)
+
+[node name="PlayerCard4" parent="." instance=ExtResource("2_7v2tf")]
+position = Vector2(817.5, 1780)
+rotation = 0.174533
+scale = Vector2(1.18, 1.18)

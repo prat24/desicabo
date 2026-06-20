@@ -1,0 +1,44 @@
+[gd_scene load_steps=2 format=3 uid="uid://bsypv1rnsvehn"]
+
+[ext_resource type="Theme" uid="uid://cpt0s6kvhikh" path="res://Assets/Themes/ssb.tres" id="1_5wsvm"]
+[ext_resource type="Script" path="res://Scripts/UI/main_menu.gd" id="2_nt9a1"]
+
+[node name="Main_menu" type="Control" unique_id=1404110678]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("2_nt9a1")
+
+[node name="Main_menu_label" type="Label" parent="." unique_id=1212402113]
+layout_mode = 1
+anchors_preset = 14
+anchor_top = 0.5
+anchor_right = 1.0
+anchor_bottom = 0.5
+offset_top = -240.0
+offset_bottom = -156.0
+grow_horizontal = 2
+grow_vertical = 2
+theme = ExtResource("1_5wsvm")
+theme_override_font_sizes/font_size = 68
+text = "Desi Cabo "
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Playbutton" type="Button" parent="." unique_id=1634503336]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.08888889
+anchor_top = 0.434375
+anchor_right = 0.912037
+anchor_bottom = 0.48697916
+grow_horizontal = 2
+grow_vertical = 2
+theme = ExtResource("1_5wsvm")
+theme_override_font_sizes/font_size = 68
+text = "PLAY"
+icon_alignment = 1
+metadata/_edit_use_anchors_ = true

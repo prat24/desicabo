@@ -1,0 +1,31 @@
+[gd_resource type="Theme" format=3 uid="uid://cpt0s6kvhikh"]
+
+[ext_resource type="FontFile" uid="uid://cghcc0h4xaltm" path="res://Assets/Fonts/nokiafc22.ttf" id="1_jt4f7"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_ci043"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_g3iwr"]
+bg_color = Color(0.933333, 0.972549, 0.996078, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_apjvl"]
+bg_color = Color(1, 1, 1, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_y6kpn"]
+bg_color = Color(0.933333, 0.972549, 0.996078, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_pyot6"]
+bg_color = Color(1, 1, 1, 1)
+
+[resource]
+default_font = ExtResource("1_jt4f7")
+default_font_size = 16
+Button/colors/font_color = Color(0, 0, 0, 1)
+Button/colors/font_focus_color = Color(0, 0, 0, 1)
+Button/colors/font_hover_color = Color(0.329412, 0.329412, 0.329412, 1)
+Button/colors/font_hover_pressed_color = Color(0, 0, 0, 1)
+Button/styles/disabled = SubResource("StyleBoxEmpty_ci043")
+Button/styles/focus = SubResource("StyleBoxFlat_g3iwr")
+Button/styles/hover = SubResource("StyleBoxFlat_apjvl")
+Button/styles/normal = SubResource("StyleBoxFlat_y6kpn")
+Button/styles/pressed = SubResource("StyleBoxFlat_pyot6")
+Label/colors/font_color = Color(0, 0, 0, 1)

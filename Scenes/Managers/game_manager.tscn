@@ -1,0 +1,37 @@
+[gd_scene format=3 uid="uid://3sgixn2grkf5"]
+
+[ext_resource type="Script" uid="uid://s0xgeqivl2fe" path="res://Scripts/Managers/game_manager.gd" id="1_heafe"]
+[ext_resource type="PackedScene" uid="uid://ix20fy68m46w" path="res://Scenes/Boards/player_hand.tscn" id="2_8ode1"]
+[ext_resource type="PackedScene" uid="uid://bpdx63s2p7uw8" path="res://Scenes/Cards/board_card.tscn" id="2_il670"]
+[ext_resource type="Texture2D" uid="uid://b8plild8c1bqu" path="res://Assets/Art/PNG/Cards/cardBack_blue3.png" id="4_hqpxk"]
+
+[node name="GameManager" type="Node2D" unique_id=1949778435]
+script = ExtResource("1_heafe")
+
+[node name="PlayerHand" parent="." unique_id=304696810 instance=ExtResource("2_8ode1")]
+max_rotation_degrees = 16.0
+
+[node name="Player2Hand" parent="." unique_id=962528982 instance=ExtResource("2_8ode1")]
+position = Vector2(1080, 1920)
+rotation = 3.1415927
+max_rotation_degrees = 16.0
+player_id = 2
+
+[node name="DeckSprite" type="Sprite2D" parent="." unique_id=815075980]
+position = Vector2(150, 960)
+scale = Vector2(1.8857143, 1.8857143)
+texture = ExtResource("4_hqpxk")
+
+[node name="CenterDrawCard" parent="." unique_id=1108670356 instance=ExtResource("2_il670")]
+z_index = 1
+position = Vector2(540, 960)
+
+[node name="DiscardPileSprite" type="Sprite2D" parent="." unique_id=1257155411]
+position = Vector2(930, 960)
+scale = Vector2(1.8857143, 1.8857143)
+texture = ExtResource("4_hqpxk")
+
+[node name="DiscardTopCard" parent="." unique_id=88107710 instance=ExtResource("2_il670")]
+visible = false
+z_index = 2
+position = Vector2(930, 960)
