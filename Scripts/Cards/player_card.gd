@@ -5,27 +5,45 @@ class_name PlayerCard
 
 @export var back_texture: Texture2D
 @export var drag_hover_lift: float = 45.0
-@export var drag_hover_time: float = 0.08
+@export var drag_hover_time: float = 0.12
+@export var hover_scale_multiplier: float = 1.06
+@export var tilt_intensity: float = 10.0
 
 var rank: String = ""
 var suit: String = ""
 var front_texture: Texture2D
 var is_face_down: bool = true
 var resting_position: Vector2 = Vector2.ZERO
+var resting_rotation_degrees: float = 0.0
+var resting_scale: Vector2 = Vector2.ONE
 var resting_z_index: int = 0
 var is_drag_hovered: bool = false
 var is_special_selected: bool = false
 var drag_hover_tween: Tween
+var scale_tween: Tween
 var player_id: int = 1
 var hover_lift_sign: float = 1.0
 
 @onready var sprite: Sprite2D = $Sprite2D
+@onready var shadow: Sprite2D = $Shadow
+
 
 func _ready() -> void:
 	add_to_group("player_cards")
 	resting_position = position
+	resting_scale = scale
 	resting_z_index = z_index
+	CardShader.apply(sprite, randf() * 1000.0)
+	CardShader.set_inset(sprite, 0.02)
+	_sync_shadow()
 	show_back()
+
+
+func _sync_shadow() -> void:
+	if shadow == null:
+		return
+	shadow.texture = sprite.texture
+	shadow.scale = sprite.scale
 
 
 func setup_card(card_rank: String, card_suit: String, card_texture: Texture2D) -> void:
@@ -38,11 +56,13 @@ func setup_card(card_rank: String, card_suit: String, card_texture: Texture2D) -
 func show_back() -> void:
 	is_face_down = true
 	sprite.texture = back_texture
+	_sync_shadow()
 
 
 func show_front() -> void:
 	is_face_down = false
 	sprite.texture = front_texture
+	_sync_shadow()
 
 
 func animate_flip_to_back(duration: float = 0.24) -> void:
@@ -54,10 +74,14 @@ func animate_flip_to_back(duration: float = 0.24) -> void:
 	var base_scale: Vector2 = sprite.scale
 
 	var flip_tween: Tween = create_tween()
+	flip_tween.set_trans(Tween.TRANS_BACK)
+	flip_tween.set_ease(Tween.EASE_IN_OUT)
 	flip_tween.tween_property(sprite, "scale:x", 0.08, half_duration)
 	flip_tween.tween_callback(Callable(self, "show_back"))
 	flip_tween.tween_property(sprite, "scale:x", base_scale.x, half_duration)
 	await flip_tween.finished
+	_sync_shadow()
+
 
 func animate_flip_to_front(duration: float = 0.24) -> void:
 	if front_texture == null:
@@ -68,11 +92,14 @@ func animate_flip_to_front(duration: float = 0.24) -> void:
 	var base_scale: Vector2 = sprite.scale
 
 	var flip_tween: Tween = create_tween()
+	flip_tween.set_trans(Tween.TRANS_BACK)
+	flip_tween.set_ease(Tween.EASE_IN_OUT)
 	flip_tween.tween_property(sprite, "scale:x", 0.08, half_duration)
 	flip_tween.tween_callback(Callable(self, "show_front"))
 	flip_tween.tween_property(sprite, "scale:x", base_scale.x, half_duration)
-
 	await flip_tween.finished
+	_sync_shadow()
+
 
 func get_card_name() -> String:
 	return suit + " " + rank
@@ -89,9 +116,11 @@ func set_resting_z_index(new_z_index: int) -> void:
 	if !is_drag_hovered:
 		z_index = resting_z_index
 
+
 func set_special_selected(selected: bool) -> void:
 	is_special_selected = selected
 	set_drag_hovered(selected)
+
 
 func set_drag_hovered(hovered: bool) -> void:
 	if is_drag_hovered == hovered:
@@ -101,22 +130,38 @@ func set_drag_hovered(hovered: bool) -> void:
 
 	if drag_hover_tween:
 		drag_hover_tween.kill()
+	if scale_tween:
+		scale_tween.kill()
 
 	var target_position: Vector2 = resting_position
+	var target_scale: Vector2 = resting_scale
 
 	if hovered:
 		target_position.y -= drag_hover_lift * hover_lift_sign
+		target_scale = resting_scale * hover_scale_multiplier
 		z_index = 100
+		CardShader.set_inset(sprite, 0.0)
+		CardShader.set_hover(sprite, 0.6)
 	else:
 		z_index = resting_z_index
+		CardShader.tween_inset(self, sprite, 0.02, drag_hover_time)
+		CardShader.set_hover(sprite, 0.0)
+		CardShader.reset_tilt(sprite)
 
 	drag_hover_tween = create_tween()
-	drag_hover_tween.tween_property(
-		self,
-		"position",
-		target_position,
-		drag_hover_time
-	)
+	drag_hover_tween.set_trans(Tween.TRANS_BACK)
+	drag_hover_tween.set_ease(Tween.EASE_OUT)
+	drag_hover_tween.tween_property(self, "position", target_position, drag_hover_time)
+
+	scale_tween = create_tween()
+	scale_tween.set_trans(Tween.TRANS_BACK)
+	scale_tween.set_ease(Tween.EASE_OUT)
+	scale_tween.tween_property(self, "scale", target_scale, drag_hover_time)
+
+
+func update_shader_tilt(global_mouse: Vector2) -> void:
+	var local_mouse: Vector2 = sprite.to_local(global_mouse)
+	CardShader.set_tilt(sprite, local_mouse, tilt_intensity)
 
 
 func get_collision_rect() -> Rect2:

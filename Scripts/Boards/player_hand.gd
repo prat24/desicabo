@@ -34,6 +34,9 @@ func _ready() -> void:
 	if auto_deal:
 		deal_from_deck(CardDeck.create_shuffled_deck())
 	arrange_cards()
+	if !Engine.is_editor_hint() && !auto_deal:
+		for card in cards:
+			card.visible = false
 
 
 ## Consume cards from the front of deck and assign them to this hand.
@@ -44,6 +47,49 @@ func deal_from_deck(deck: Array[Dictionary]) -> void:
 		var d: Dictionary = deck.pop_front()
 		cards[i].player_id = player_id
 		cards[i].setup_card(d["rank"], d["suit"], d["texture"])
+
+
+## Move every slot to the deck so cards can fly in one at a time.
+func stack_cards_at_deck(deck_global_pos: Vector2) -> void:
+	for card in cards:
+		card.visible = true
+		card.global_position = deck_global_pos
+		card.rotation_degrees = 0.0
+		card.z_index = 0
+
+
+## Deal one card from deck with a fly-in animation from the deck sprite.
+func animate_deal_card(
+	card_index: int,
+	card_data: Dictionary,
+	deck_global_pos: Vector2,
+	fly_time: float,
+	deck_scale: Vector2 = Vector2.ONE
+) -> void:
+	var card: PlayerCard = cards[card_index]
+	card.player_id = player_id
+	card.setup_card(card_data["rank"], card_data["suit"], card_data["texture"])
+	card.visible = true
+	card.global_position = deck_global_pos
+	card.rotation_degrees = 0.0
+	card.scale = deck_scale
+	card.z_index = 100
+
+	var target_global: Vector2 = to_global(card.resting_position)
+	var fly := create_tween().set_parallel(true)
+	fly.tween_property(card, "global_position", target_global, fly_time) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	fly.tween_property(card, "rotation_degrees", card.resting_rotation_degrees, fly_time) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	fly.tween_property(card, "scale", card_scale, fly_time) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	await fly.finished
+
+	card.position = card.resting_position
+	card.rotation_degrees = card.resting_rotation_degrees
+	card.resting_scale = card_scale
+	card.scale = card_scale
+	card.set_resting_z_index(card_index)
 
 
 ## Position all cards in a fan arc anchored to the player's screen edge.
@@ -61,8 +107,10 @@ func arrange_cards() -> void:
 		var t: float = (i - mid) / mid if mid > 0.0 else 0.0
 		var arc: float = pow(abs(t), 2.0) * arc_height
 		card.set_resting_position(Vector2(center.x + (i - mid) * card_spacing, center.y + arc * (-1.0 if position_at_top else 1.0)))
-		card.rotation_degrees = (180.0 if position_at_top else 0.0) + t * max_rotation_degrees
+		card.resting_rotation_degrees = (180.0 if position_at_top else 0.0) + t * max_rotation_degrees
+		card.rotation_degrees = card.resting_rotation_degrees
 		card.hover_lift_sign = -1.0 if position_at_top else 1.0
+		card.resting_scale = card_scale
 		card.scale = card_scale
 		card.set_resting_z_index(i)
 

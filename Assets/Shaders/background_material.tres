@@ -1,0 +1,16 @@
+[gd_resource type="ShaderMaterial" load_steps=2 format=3]
+
+[ext_resource type="Shader" path="res://Assets/Shaders/background.gdshader" id="1_shader"]
+
+[resource]
+shader = ExtResource("1_shader")
+shader_parameter/spin_rotation_speed = 1.8
+shader_parameter/move_speed = 5.5
+shader_parameter/contrast = 3.2
+shader_parameter/lighting = 0.38
+shader_parameter/spin_amount = 0.22
+shader_parameter/pixel_filter = 740.0
+shader_parameter/is_rotating = true
+shader_parameter/colour_1 = Color(0.82, 0.22, 0.18, 1)
+shader_parameter/colour_2 = Color(0.05, 0.38, 0.55, 1)
+shader_parameter/colour_3 = Color(0.08, 0.12, 0.14, 1)

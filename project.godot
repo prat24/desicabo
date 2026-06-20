@@ -34,4 +34,11 @@ pointing/emulate_touch_from_mouse=true
 
 rendering_device/driver.windows="d3d12"
 renderer/rendering_method="mobile"
-environment/defaults/default_clear_color=Color(0.9607843, 0.9607843, 0.8627451, 1)
+environment/defaults/default_clear_color=Color(0.08, 0.12, 0.14, 1)
+
+[shader_globals]
+
+mouse_screen_pos={
+"type": "vec2",
+"value": Vector2(0, 0)
+}

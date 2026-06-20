@@ -5,8 +5,12 @@ const CARD_COLLISION_MASK = 1
 const NORMAL_CARD_SCALE = Vector2(1.0, 1.0)
 const HOVERED_CARD_SCALE = Vector2(1.05, 1.05)
 const SNAP_TIME = 0.18
+const DEAL_FLY_TIME = 0.28
+const DEAL_STAGGER_TIME = 0.07
 
 @export_range(0.0, 15.0, 0.1) var pre_game_reveal_time: float = 5.0
+@export_range(0.1, 0.8, 0.01) var initial_deal_fly_time: float = DEAL_FLY_TIME
+@export_range(0.0, 0.3, 0.01) var initial_deal_stagger: float = DEAL_STAGGER_TIME
 @export_range(0.0, 1.0, 0.01) var pre_game_dim_alpha: float = 0.35
 @export_range(0.05, 1.5, 0.01) var player_card_flip_time: float = 0.24
 
@@ -33,8 +37,10 @@ var special_overlay: ColorRect
 var selected_source_card: PlayerCard = null
 var hovered_special_card: PlayerCard = null
 var seven_selecting_opponent: bool = false
+var card_highlight_tweens: Dictionary = {}
 
 # ── Scene references ──────────────────────────────────────────────────────────
+@onready var background: ColorRect = $Background
 @onready var deck_sprite: Sprite2D = $DeckSprite
 @onready var center_draw_card: BoardCard = $CenterDrawCard
 @onready var discard_pile_sprite: Sprite2D = $DiscardPileSprite
@@ -49,13 +55,61 @@ func _ready() -> void:
 	center_draw_card.visible = false
 	discard_top_card.visible = false
 	discard_top_card.get_node("Area2D").input_pickable = false
+	discard_top_card.get_node("Area2D/CollisionShape2D").disabled = true
+	setup_board_card_shaders()
 	connect_center_draw_card_signals()
 	randomize()
 	deck = CardDeck.create_shuffled_deck()
-	player1_hand.deal_from_deck(deck)
-	player2_hand.deal_from_deck(deck)
+	await deal_initial_hands_animated()
 	await run_pre_game_hand_reveal()
 	await start_turn()
+
+
+func setup_board_card_shaders() -> void:
+	CardShader.apply(deck_sprite, 12.0)
+	CardShader.apply(discard_pile_sprite, 24.0)
+	CardShader.set_inset(deck_sprite, 0.03)
+	CardShader.set_inset(discard_pile_sprite, 0.03)
+
+
+func deal_initial_hands_animated() -> void:
+	turn_state = TurnState.DEALING
+
+	player1_hand.arrange_cards()
+	player2_hand.arrange_cards()
+
+	var deck_pos: Vector2 = deck_sprite.global_position
+	var deck_scale: Vector2 = deck_sprite.scale
+	player1_hand.stack_cards_at_deck(deck_pos)
+	player2_hand.stack_cards_at_deck(deck_pos)
+
+	var slots_per_hand: int = player1_hand.cards.size()
+	for slot in range(slots_per_hand):
+		if deck.is_empty():
+			break
+
+		await player1_hand.animate_deal_card(
+			slot,
+			deck.pop_front(),
+			deck_pos,
+			initial_deal_fly_time,
+			deck_scale
+		)
+		if initial_deal_stagger > 0.0:
+			await get_tree().create_timer(initial_deal_stagger).timeout
+
+		if deck.is_empty():
+			break
+
+		await player2_hand.animate_deal_card(
+			slot,
+			deck.pop_front(),
+			deck_pos,
+			initial_deal_fly_time,
+			deck_scale
+		)
+		if initial_deal_stagger > 0.0 and slot < slots_per_hand - 1:
+			await get_tree().create_timer(initial_deal_stagger).timeout
 
 func run_pre_game_hand_reveal() -> void:
 	await run_hand_reveal(player1_hand)
@@ -112,14 +166,26 @@ func dim_for_hand_reveal(active_hand: PlayerHand, dimmed: bool) -> void:
 
 
 func _process(_delta: float) -> void:
+	RenderingServer.global_shader_parameter_set("mouse_screen_pos", get_viewport().get_mouse_position())
+
 	if turn_state == TurnState.SPECIAL_7:
 		update_seven_hover()
+		if hovered_special_card and hovered_special_card != selected_source_card:
+			hovered_special_card.update_shader_tilt(get_global_mouse_position())
 		return
 
 	if dragged_card == null:
 		return
 
 	var mouse_position: Vector2 = get_global_mouse_position()
+
+	if dragged_card is BoardCard:
+		dragged_card.update_shader_tilt(mouse_position)
+		CardShader.set_hover(dragged_card.sprite, 1.0)
+		CardShader.set_inset(dragged_card.sprite, 0.0)
+
+	if hovered_player_card:
+		hovered_player_card.update_shader_tilt(mouse_position)
 
 	var collision_shape: CollisionShape2D = dragged_card.get_node("Area2D/CollisionShape2D")
 	var shape: RectangleShape2D = collision_shape.shape as RectangleShape2D
@@ -163,7 +229,11 @@ func start_card_drag(card: Node2D) -> void:
 	if card is BoardCard and !card.can_drag:
 		return
 
-	card.scale = NORMAL_CARD_SCALE
+	if card is BoardCard:
+		card.tween_hover_scale(NORMAL_CARD_SCALE)
+		CardShader.set_hover(card.sprite, 1.0)
+		CardShader.set_inset(card.sprite, 0.0)
+
 	dragged_card = card
 
 
@@ -218,12 +288,26 @@ func on_hovered_off_card(card: Node2D) -> void:
 
 
 func highlight_card(card: Node2D, hovered: bool) -> void:
-	if hovered:
-		card.scale = HOVERED_CARD_SCALE
-		card.z_index = 2
-	else:
-		card.scale = NORMAL_CARD_SCALE
-		card.z_index = 1
+	if card_highlight_tweens.has(card):
+		card_highlight_tweens[card].kill()
+
+	if card is BoardCard:
+		var board_card := card as BoardCard
+		var target_scale := HOVERED_CARD_SCALE if hovered else NORMAL_CARD_SCALE
+		board_card.tween_hover_scale(target_scale)
+		board_card.z_index = 2 if hovered else 1
+		CardShader.set_hover(board_card.sprite, 1.0 if hovered else 0.0)
+		if hovered:
+			CardShader.set_inset(board_card.sprite, 0.0)
+		else:
+			CardShader.tween_inset(board_card, board_card.sprite, 0.02, 0.12)
+		return
+
+	var tween := create_tween().set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	card_highlight_tweens[card] = tween
+	var target_scale := HOVERED_CARD_SCALE if hovered else NORMAL_CARD_SCALE
+	tween.tween_property(card, "scale", target_scale, 0.14)
+	card.z_index = 2 if hovered else 1
 
 
 func check_card_click() -> Node2D:
@@ -371,9 +455,13 @@ func deal_center_draw_card() -> void:
 	center_draw_card.show_back()
 	center_draw_card.can_drag = false
 	center_draw_card.global_position = deck_sprite.global_position
+	center_draw_card.scale = deck_sprite.scale
 
-	var move_tween := create_tween()
-	move_tween.tween_property(center_draw_card, "global_position", center_draw_position, 0.22)
+	var move_tween := create_tween().set_parallel(true)
+	move_tween.tween_property(center_draw_card, "global_position", center_draw_position, initial_deal_fly_time) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	move_tween.tween_property(center_draw_card, "scale", NORMAL_CARD_SCALE, initial_deal_fly_time) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	await move_tween.finished
 
 	await center_draw_card.flip_to_front()
@@ -385,7 +473,8 @@ func discard_center_draw_card() -> void:
 	center_draw_card.can_drag = false
 
 	var move_tween := create_tween()
-	move_tween.tween_property(center_draw_card, "global_position", discard_pile_position, SNAP_TIME)
+	move_tween.tween_property(center_draw_card, "global_position", discard_pile_position, SNAP_TIME) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	await move_tween.finished
 
 	copy_draw_card_to_discard(center_draw_card)
@@ -402,7 +491,8 @@ func swap_draw_card_with_player_card(player_card: PlayerCard) -> void:
 	var new_card_data := get_draw_card_data(center_draw_card)
 
 	var move_tween := create_tween()
-	move_tween.tween_property(center_draw_card, "global_position", player_card.global_position, SNAP_TIME)
+	move_tween.tween_property(center_draw_card, "global_position", player_card.global_position, SNAP_TIME) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	await move_tween.finished
 
 	player_card.setup_card(
@@ -423,10 +513,12 @@ func return_center_draw_card() -> void:
 	center_draw_card.can_drag = false
 
 	var move_tween := create_tween()
-	move_tween.tween_property(center_draw_card, "global_position", center_draw_position, SNAP_TIME)
+	move_tween.tween_property(center_draw_card, "global_position", center_draw_position, SNAP_TIME) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	await move_tween.finished
 
-	center_draw_card.scale = HOVERED_CARD_SCALE
+	center_draw_card.scale = NORMAL_CARD_SCALE
+	center_draw_card.tween_hover_scale(HOVERED_CARD_SCALE)
 	center_draw_card.can_drag = true
 	turn_state = TurnState.WAITING_FOR_DROP
 
@@ -445,14 +537,12 @@ func animate_card_to_discard(card_data: Dictionary, start_position: Vector2) -> 
 	discard_top_card.z_index = 5
 
 	var move_tween := create_tween()
-	move_tween.tween_property(discard_top_card, "global_position", discard_pile_position, 0.34)
+	move_tween.tween_property(discard_top_card, "global_position", discard_pile_position, 0.34) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	discard_top_card.flip_to_front(false)
 
 	await move_tween.finished
-	if discard_top_card.animation_player.is_playing():
-		await discard_top_card.animation_player.animation_finished
 	discard_top_card.global_position = discard_pile_position
-
 
 func copy_draw_card_to_discard(card: BoardCard) -> void:
 	discard_top_card.visible = true

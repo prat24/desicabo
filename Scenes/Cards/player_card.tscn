@@ -1,11 +1,18 @@
-[gd_scene load_steps=3 format=3 uid="uid://cy7el7euroygw"]
+[gd_scene format=3 uid="uid://cy7el7euroygw"]
 
-[ext_resource type="Texture2D" path="res://Assets/Art/PNG/Cards/cardBack_blue2.png" id="1_84gl2"]
-[ext_resource type="Script" path="res://Scripts/Cards/player_card.gd" id="1_vutb1"]
+[ext_resource type="Texture2D" uid="uid://2isylkgo0dnu" path="res://Assets/Art/PNG/Cards/cardBack_main.png" id="1_84gl2"]
+[ext_resource type="Script" uid="uid://btboemg8u553n" path="res://Scripts/Cards/player_card.gd" id="1_vutb1"]
 
 [node name="Card" type="Node2D" unique_id=1832272288]
 script = ExtResource("1_vutb1")
 back_texture = ExtResource("1_84gl2")
+
+[node name="Shadow" type="Sprite2D" parent="." unique_id=1982272289]
+z_index = -1
+position = Vector2(5, 9)
+modulate = Color(0, 0, 0, 0.32)
+scale = Vector2(1.8857143, 1.8857143)
+texture = ExtResource("1_84gl2")
 
 [node name="Sprite2D" type="Sprite2D" parent="." unique_id=1623482511]
 position = Vector2(-2.842171e-14, 2.842171e-14)

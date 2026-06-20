@@ -3,10 +3,25 @@
 [ext_resource type="Script" uid="uid://s0xgeqivl2fe" path="res://Scripts/Managers/game_manager.gd" id="1_heafe"]
 [ext_resource type="PackedScene" uid="uid://ix20fy68m46w" path="res://Scenes/Boards/player_hand.tscn" id="2_8ode1"]
 [ext_resource type="PackedScene" uid="uid://bpdx63s2p7uw8" path="res://Scenes/Cards/board_card.tscn" id="2_il670"]
-[ext_resource type="Texture2D" uid="uid://b8plild8c1bqu" path="res://Assets/Art/PNG/Cards/cardBack_blue3.png" id="4_hqpxk"]
+[ext_resource type="Material" path="res://Assets/Shaders/background_material.tres" id="3_bgmat"]
+[ext_resource type="Texture2D" uid="uid://2isylkgo0dnu" path="res://Assets/Art/PNG/Cards/cardBack_main.png" id="4_j1mdm"]
+[ext_resource type="Texture2D" uid="uid://nugooig5tlb" path="res://Assets/Art/PNG/Cards/discard_pile.png" id="6_xbfc7"]
 
 [node name="GameManager" type="Node2D" unique_id=1949778435]
 script = ExtResource("1_heafe")
+
+[node name="Background" type="ColorRect" parent="." unique_id=1920773985]
+modulate = Color(0.18431373, 1, 1, 0.3137255)
+self_modulate = Color(0, 0.30980393, 1, 0.8117647)
+material = ExtResource("3_bgmat")
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_right = 1080.0
+offset_bottom = 1920.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
 
 [node name="PlayerHand" parent="." unique_id=304696810 instance=ExtResource("2_8ode1")]
 max_rotation_degrees = 16.0
@@ -19,8 +34,8 @@ player_id = 2
 
 [node name="DeckSprite" type="Sprite2D" parent="." unique_id=815075980]
 position = Vector2(150, 960)
-scale = Vector2(1.8857143, 1.8857143)
-texture = ExtResource("4_hqpxk")
+scale = Vector2(2.1, 2.1)
+texture = ExtResource("4_j1mdm")
 
 [node name="CenterDrawCard" parent="." unique_id=1108670356 instance=ExtResource("2_il670")]
 z_index = 1
@@ -28,8 +43,8 @@ position = Vector2(540, 960)
 
 [node name="DiscardPileSprite" type="Sprite2D" parent="." unique_id=1257155411]
 position = Vector2(930, 960)
-scale = Vector2(1.8857143, 1.8857143)
-texture = ExtResource("4_hqpxk")
+scale = Vector2(2.1, 2.1)
+texture = ExtResource("6_xbfc7")
 
 [node name="DiscardTopCard" parent="." unique_id=88107710 instance=ExtResource("2_il670")]
 visible = false
