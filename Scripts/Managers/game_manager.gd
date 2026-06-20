@@ -326,6 +326,7 @@ func start_turn() -> void:
 	if deck.is_empty():
 		turn_state = TurnState.GAME_OVER
 		center_draw_card.visible = false
+		await reveal_all_cards()
 		return
 
 	if current_player == 2 and not player2_revealed:
@@ -498,7 +499,6 @@ func run_seven_swap_power() -> void:
 	seven_selecting_opponent = false
 
 	create_special_overlay()
-
 	set_hand_enabled(get_active_hand(), true)
 	set_hand_enabled(get_other_hand(), false)
 
@@ -568,7 +568,6 @@ func handle_seven_click() -> void:
 	set_hand_enabled(player2_hand, true)
 
 	turn_state = TurnState.WAITING_FOR_DROP
-
 
 func animate_swap_player_cards(
 	first: PlayerCard,
@@ -664,3 +663,12 @@ func get_sprite_global_rect(card_sprite: Sprite2D) -> Rect2:
 		max_position = max_position.max(global_corner)
 
 	return Rect2(min_position, max_position - min_position)
+
+func reveal_all_cards() -> void:
+	var all_cards: Array[PlayerCard] = []
+
+	all_cards.append_array(player1_hand.cards)
+	all_cards.append_array(player2_hand.cards)
+
+	for card in all_cards:
+		await card.animate_flip_to_front(player_card_flip_time)

@@ -59,6 +59,20 @@ func animate_flip_to_back(duration: float = 0.24) -> void:
 	flip_tween.tween_property(sprite, "scale:x", base_scale.x, half_duration)
 	await flip_tween.finished
 
+func animate_flip_to_front(duration: float = 0.24) -> void:
+	if front_texture == null:
+		show_front()
+		return
+
+	var half_duration: float = maxf(0.01, duration * 0.5)
+	var base_scale: Vector2 = sprite.scale
+
+	var flip_tween: Tween = create_tween()
+	flip_tween.tween_property(sprite, "scale:x", 0.08, half_duration)
+	flip_tween.tween_callback(Callable(self, "show_front"))
+	flip_tween.tween_property(sprite, "scale:x", base_scale.x, half_duration)
+
+	await flip_tween.finished
 
 func get_card_name() -> String:
 	return suit + " " + rank
