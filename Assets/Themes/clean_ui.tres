@@ -1,4 +1,4 @@
-[gd_resource type="Theme" load_steps=2 format=3]
+[gd_resource type="Theme" format=3 uid="uid://cjwdgguwbjmqa"]
 
 [sub_resource type="SystemFont" id="SystemFont_clean"]
 font_names = PackedStringArray("Avenir Next", "Avenir", "Futura", "Helvetica Neue", "Roboto")

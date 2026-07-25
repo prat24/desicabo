@@ -1,13 +1,14 @@
 [gd_scene format=3 uid="uid://bsypv1rnsvehn"]
 
-[ext_resource type="Theme" path="res://Assets/Themes/clean_ui.tres" id="1_5wsvm"]
+[ext_resource type="Theme" uid="uid://cjwdgguwbjmqa" path="res://Assets/Themes/clean_ui.tres" id="1_5wsvm"]
 [ext_resource type="Script" uid="uid://bsfxfdh2jaqrs" path="res://Scripts/UI/main_menu.gd" id="2_nt9a1"]
+[ext_resource type="Material" path="res://Assets/Shaders/background_material.tres" id="3_bgmat"]
 
 [sub_resource type="SystemFont" id="SystemFont_title"]
 font_names = PackedStringArray("Avenir Next", "Avenir", "Futura", "Helvetica Neue", "Roboto")
 font_weight = 900
 
-[node name="Main_menu" type="Control"]
+[node name="Main_menu" type="Control" unique_id=2036341202]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -16,7 +17,19 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("2_nt9a1")
 
-[node name="Background" type="ColorRect" parent="."]
+[node name="SwirlBackground" type="ColorRect" parent="." unique_id=1994570817]
+modulate = Color(0.18431373, 1, 1, 0.3137255)
+self_modulate = Color(0, 0.30980393, 1, 0.8117647)
+material = ExtResource("3_bgmat")
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="Background" type="ColorRect" parent="." unique_id=900564956]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -26,9 +39,9 @@ grow_vertical = 2
 mouse_filter = 2
 color = Color(0.043, 0.068, 0.09, 1)
 
-[node name="CardPile" type="Node2D" parent="."]
+[node name="CardPile" type="Node2D" parent="." unique_id=1968232699]
 
-[node name="TitleLabel" type="Label" parent="."]
+[node name="TitleLabel" type="Label" parent="." unique_id=74765873]
 layout_mode = 1
 anchors_preset = -1
 anchor_top = 0.32
@@ -48,4 +61,4 @@ Cabo"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="HandCards" type="Node2D" parent="."]
+[node name="HandCards" type="Node2D" parent="." unique_id=1328974456]

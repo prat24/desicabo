@@ -10,6 +10,7 @@ func _ready() -> void:
 	music.loop = true
 	stream = music
 	volume_db = MUSIC_VOLUME_DB
+	bus = AudioBuses.MUSIC
 
 
 func start() -> void:

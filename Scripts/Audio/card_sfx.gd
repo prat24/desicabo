@@ -35,5 +35,7 @@ static func _create_player(sounds: Array) -> AudioStreamPlayer:
 	var player := AudioStreamPlayer.new()
 	player.stream = randomizer
 	player.max_polyphony = 4
-	player.volume_db = -8.0
+	# -10 dB from the previous level, which halves perceived loudness.
+	player.volume_db = -18.0
+	player.bus = AudioBuses.SFX
 	return player

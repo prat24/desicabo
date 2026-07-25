@@ -29,8 +29,6 @@ const FOCUSED_DRAW_CARD_Z = 250
 ## How far the drawn card steps away from screen center in 3-player mode so
 ## it never covers the tappable discard pile.
 const DRAW_CARD_TURN_OFFSET = 160.0
-## Beige used by the title screen labels and the seven skip button.
-const PROMPT_ACCENT_COLOR = Color(0.94, 0.9, 0.82)
 const MAIN_MENU_SCENE = "res://Scenes/UI/main_menu.tscn"
 
 const UI_THEME = preload("res://Assets/Themes/clean_ui.tres")
@@ -636,7 +634,7 @@ func choose_target_player(choose_prompt_text: String) -> int:
 	chosen_target_player = 0
 	hovered_special_card = null
 
-	await show_fullscreen_prompt(choose_prompt_text, turn_prompt_time, 0.15, current_player, PROMPT_ACCENT_COLOR)
+	await show_fullscreen_prompt(choose_prompt_text, turn_prompt_time, 0.15, current_player, UiPalette.ACCENT)
 
 	# Same layering as the seven power: board cards dim under the overlay,
 	# selectable hands are raised above it.
@@ -965,15 +963,15 @@ func show_seven_skip_button() -> void:
 	seven_skip_button.theme = UI_THEME
 	seven_skip_button.add_theme_font_size_override("font_size", 48)
 	for color_name in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
-		seven_skip_button.add_theme_color_override(color_name, Color(0.08, 0.07, 0.05))
+		seven_skip_button.add_theme_color_override(color_name, UiPalette.INK)
 
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.94, 0.9, 0.82)
+	style.bg_color = UiPalette.ACCENT
 	style.set_corner_radius_all(16)
 	style.set_content_margin_all(28.0)
 	seven_skip_button.add_theme_stylebox_override("normal", style)
 	var pressed_style := style.duplicate() as StyleBoxFlat
-	pressed_style.bg_color = Color(0.85, 0.8, 0.7)
+	pressed_style.bg_color = UiPalette.ACCENT_PRESSED
 	seven_skip_button.add_theme_stylebox_override("pressed", pressed_style)
 	seven_skip_button.add_theme_stylebox_override("hover", style)
 	seven_skip_button.add_theme_stylebox_override("focus", StyleBoxEmpty.new())

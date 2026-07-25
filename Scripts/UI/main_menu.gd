@@ -1,15 +1,27 @@
 ## MainMenu — title screen. The title text matches the background color, so it
-## starts invisible; card backs get thrown down beneath the text layer,
-## revealing it. Then a fanned hand of card buttons rises from the bottom:
-## Local / Online / Settings. Picking Local slides that hand away and deals a
-## second hand asking how many players (2 / 3 / 4). Only Local, 2, and 3 are
-## live for now.
+## starts invisible; card backs are thrown down beneath the text layer to
+## reveal it. The title then swells, snaps back with a boom, turns white, and
+## blasts the pile away. Finally a fanned hand of card buttons rises from the
+## bottom: Local / Online / Settings. Picking Local slides that hand away and
+## deals a second hand asking how many players (2 / 3 / 4). Online and the
+## 4-player card are not live yet.
 extends Control
 
 const GAME_SCENE_PATH := "res://Scenes/Managers/game_manager.tscn"
 const PLAYER_CARD_SCENE := preload("res://Scenes/Cards/player_card.tscn")
 const CARD_BACK_TEXTURE := preload("res://Assets/Art/PNG/Cards/cardBack_main.png")
 const UI_THEME := preload("res://Assets/Themes/clean_ui.tres")
+const AIR_RISE_SOUND := preload("res://Assets/Sounds/air rise.mp3")
+const BOOM_SOUND := preload("res://Assets/Sounds/boom.mp3")
+const TITLE_SFX_VOLUME_DB := -20.0
+
+# ── Title impact: the title swells, snaps back, and blasts the pile away ──────
+const TITLE_GROW_SCALE := 1.07
+const TITLE_GROW_TIME := 2.0
+const TITLE_SNAP_TIME := 0.09
+const TITLE_BLAST_TIME := 0.7
+## Peak shake offset, reached just before the snap; it ramps up from nothing.
+const TITLE_SHAKE_STRENGTH := 2.0
 
 # ── Title card throw ──────────────────────────────────────────────────────────
 ## The pile is two staggered, jittered rows covering the two-line title —
@@ -32,7 +44,7 @@ const LAND_SOUND_FRACTION := 0.65
 const MAIN_HAND := [
 	{"id": "local", "texture": preload("res://Assets/Art/PNG/TitleCards/Local.png"), "enabled": true},
 	{"id": "online", "texture": preload("res://Assets/Art/PNG/TitleCards/Online.png"), "enabled": false},
-	{"id": "settings", "texture": preload("res://Assets/Art/PNG/TitleCards/Settings.png"), "enabled": false},
+	{"id": "settings", "texture": preload("res://Assets/Art/PNG/TitleCards/Settings.png"), "enabled": true},
 ]
 const PLAYER_COUNT_HAND := [
 	{"id": "2", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts2.png"), "enabled": true},
@@ -50,17 +62,28 @@ const HAND_ROTATION_STEP_DEGREES := 8.0
 const HAND_FLY_TIME := 0.45
 const HAND_STAGGER := 0.12
 const HAND_SLIDE_OUT_TIME := 0.3
+## Far enough below the screen edge that the whole card clears it.
+const HAND_SLIDE_OUT_DISTANCE := 800.0
 const DISABLED_CARD_MODULATE := Color(0.45, 0.45, 0.45)
 
+# ── Scene transitions ─────────────────────────────────────────────────────────
+const FADE_OVERLAY_Z := 500
+const FADE_IN_TIME := 0.4
+const FADE_OUT_TIME := 0.35
+
+@onready var solid_background: ColorRect = $Background
 @onready var card_pile: Node2D = $CardPile
 @onready var title_label: Label = $TitleLabel
 @onready var hand_cards_root: Node2D = $HandCards
 
 var sfx_place: AudioStreamPlayer
 var sfx_slide: AudioStreamPlayer
+var sfx_air_rise: AudioStreamPlayer
+var sfx_boom: AudioStreamPlayer
 var hand_cards: Array[PlayerCard] = []
 var clickable_cards: Array[PlayerCard] = []
 var hovered_card: PlayerCard
+var title_rest_position: Vector2
 var input_enabled := false
 var is_starting_game := false
 
@@ -70,7 +93,18 @@ func _ready() -> void:
 	sfx_slide = CardSfx.create_slide_player()
 	add_child(sfx_place)
 	add_child(sfx_slide)
+	sfx_air_rise = make_title_sfx_player(AIR_RISE_SOUND)
+	sfx_boom = make_title_sfx_player(BOOM_SOUND)
 	run_intro()
+
+
+func make_title_sfx_player(stream: AudioStream) -> AudioStreamPlayer:
+	var player := AudioStreamPlayer.new()
+	player.stream = stream
+	player.volume_db = TITLE_SFX_VOLUME_DB
+	player.bus = AudioBuses.SFX
+	add_child(player)
+	return player
 
 
 func run_intro() -> void:
@@ -78,24 +112,104 @@ func run_intro() -> void:
 	await get_tree().process_frame
 	fade_in_from_black()
 	await throw_title_cards()
+	await run_title_impact()
 	Music.start()
 	await fly_in_hand_cards(MAIN_HAND)
+	reveal_swirl_background()
 	input_enabled = true
+
+
+## The title swells against the card pile, snaps back with a boom, turns white
+## (it was background-colored until now), and blows the pile off screen.
+func run_title_impact() -> void:
+	title_label.pivot_offset = title_label.size * 0.5
+	title_rest_position = title_label.position
+
+	sfx_air_rise.play()
+	var grow := create_tween()
+	grow.tween_property(title_label, "scale", Vector2(TITLE_GROW_SCALE, TITLE_GROW_SCALE), TITLE_GROW_TIME) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	var shake := shake_title_while_growing()
+	await grow.finished
+	shake.kill()
+	title_label.position = title_rest_position
+
+	var snap := create_tween()
+	snap.tween_property(title_label, "scale", Vector2.ONE, TITLE_SNAP_TIME) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	await snap.finished
+
+	sfx_air_rise.stop()
+	sfx_boom.play()
+	title_label.add_theme_color_override("font_color", Color.WHITE)
+	await blow_away_title_cards()
+
+
+## Jitter the title while it swells, ramping from still to TITLE_SHAKE_STRENGTH
+## so the strain builds. The caller kills this tween and restores the position.
+func shake_title_while_growing() -> Tween:
+	var shake := create_tween()
+	shake.tween_method(
+		func(strength: float) -> void:
+			title_label.position = title_rest_position + Vector2(
+				randf_range(-strength, strength),
+				randf_range(-strength, strength)
+			),
+		0.0,
+		TITLE_SHAKE_STRENGTH,
+		TITLE_GROW_TIME
+	)
+	return shake
+
+
+## Every card in the pile flies straight out from the title and is freed.
+func blow_away_title_cards() -> void:
+	var title_center: Vector2 = title_label.get_global_rect().get_center()
+	var blast_distance: float = get_viewport_rect().size.length()
+
+	var blast := create_tween().set_parallel(true)
+	for card: Sprite2D in card_pile.get_children():
+		var direction: Vector2 = card.global_position - title_center
+		if direction.length() < 1.0:
+			direction = Vector2.RIGHT.rotated(randf() * TAU)
+		direction = direction.normalized()
+
+		blast.tween_property(card, "position", card.position + direction * blast_distance, TITLE_BLAST_TIME) \
+			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+		blast.tween_property(card, "rotation_degrees", card.rotation_degrees + randf_range(-200.0, 200.0), TITLE_BLAST_TIME) \
+			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	await blast.finished
+
+	for card in card_pile.get_children():
+		card.queue_free()
+
+
+## Once the menu is fully assembled, the solid backdrop dissolves to reveal
+## the animated swirl background (same shader as the game) beneath it.
+func reveal_swirl_background() -> void:
+	var fade_tween := create_tween()
+	fade_tween.tween_property(solid_background, "modulate:a", 0.0, 1.2) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 
 
 ## Smooth arrival (from launch or from a finished game): start black, fade in
 ## while the title cards begin to fly.
 func fade_in_from_black() -> void:
+	var fade := add_fade_overlay(1.0)
+	var fade_tween := create_tween()
+	fade_tween.tween_property(fade, "color:a", 0.0, FADE_IN_TIME)
+	fade_tween.tween_callback(fade.queue_free)
+
+
+## Full-screen black rect above everything, used for scene transitions.
+func add_fade_overlay(alpha: float) -> ColorRect:
 	var fade := ColorRect.new()
-	fade.color = Color(0.0, 0.0, 0.0, 1.0)
+	fade.color = Color(0.0, 0.0, 0.0, alpha)
 	fade.size = get_viewport_rect().size
-	fade.z_index = 500
+	fade.z_index = FADE_OVERLAY_Z
 	fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(fade)
-
-	var fade_tween := create_tween()
-	fade_tween.tween_property(fade, "color:a", 0.0, 0.4)
-	fade_tween.tween_callback(fade.queue_free)
+	return fade
 
 
 func _process(_delta: float) -> void:
@@ -136,6 +250,9 @@ func _input(event: InputEvent) -> void:
 	var tap_position := get_global_mouse_position()
 	for card in clickable_cards:
 		if get_card_resting_rect(card).has_point(tap_position):
+			# _input runs before GUI input, so without this the same tap would
+			# also land on any panel this opens (closing it instantly).
+			get_viewport().set_input_as_handled()
 			handle_card_pressed(card)
 			return
 
@@ -145,10 +262,26 @@ func handle_card_pressed(card: PlayerCard) -> void:
 	match card.rank:
 		"local":
 			show_player_count_picker(card)
+		"settings":
+			open_settings(card)
 		"2":
 			start_game_with_card(card, 2)
 		"3":
 			start_game_with_card(card, 3)
+
+
+func open_settings(card: PlayerCard) -> void:
+	input_enabled = false
+	play_place_sound()
+
+	var panel := SettingsPanel.new()
+	add_child(panel)
+	await panel.closed
+
+	# Drop the hover the card kept while the panel was open.
+	card.set_drag_hovered(false)
+	hovered_card = null
+	input_enabled = true
 
 
 ## Hit-test against the card's resting spot, not its animated rect: testing
@@ -280,7 +413,7 @@ func slide_out_hand_cards() -> void:
 	play_slide_sound()
 	var slide := create_tween().set_parallel(true)
 	for card in hand_cards:
-		slide.tween_property(card, "position:y", card.position.y + 800.0, HAND_SLIDE_OUT_TIME) \
+		slide.tween_property(card, "position:y", card.position.y + HAND_SLIDE_OUT_DISTANCE, HAND_SLIDE_OUT_TIME) \
 			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
 	await slide.finished
 
@@ -307,7 +440,7 @@ func show_player_count_label() -> void:
 	label.text = "How many players?"
 	label.theme = UI_THEME
 	label.add_theme_font_size_override("font_size", 60)
-	label.add_theme_color_override("font_color", Color(0.94, 0.9, 0.82))
+	label.add_theme_color_override("font_color", UiPalette.ACCENT)
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.size = Vector2(screen.x, 80.0)
 	label.position = Vector2(0.0, screen.y - 560.0)
@@ -326,15 +459,9 @@ func start_game_with_card(card: PlayerCard, player_count: int) -> void:
 
 	# Fade to black, then swap scenes; the game fades back in on its side.
 	# The short delay lets the card lift read as press feedback first.
-	var fade := ColorRect.new()
-	fade.color = Color(0.0, 0.0, 0.0, 0.0)
-	fade.size = get_viewport_rect().size
-	fade.z_index = 500
-	fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(fade)
-
+	var fade := add_fade_overlay(0.0)
 	var fade_tween := create_tween()
-	fade_tween.tween_property(fade, "color:a", 1.0, 0.35).set_delay(0.12)
+	fade_tween.tween_property(fade, "color:a", 1.0, FADE_OUT_TIME).set_delay(0.12)
 	await fade_tween.finished
 	get_tree().change_scene_to_file(GAME_SCENE_PATH)
 
