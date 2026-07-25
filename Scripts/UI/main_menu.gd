@@ -36,9 +36,13 @@ const TITLE_CARD_START_SCALE := 3.0
 const THROW_TIME := 0.5
 const THROW_STAGGER := 0.11
 const OFFSCREEN_MARGIN := 320.0
-## The ease-out means a card has visually arrived well before the tween ends,
-## so the landing sound plays at this fraction of the flight time.
-const LAND_SOUND_FRACTION := 0.65
+## When a thrown card visually touches down, as a fraction of THROW_TIME.
+## The scale uses TRANS_BACK/EASE_OUT, which shrinks the card past its target
+## and springs back — that squash is what the eye reads as the impact, and it
+## peaks at 0.58 of the tween, not at its end. The flights that land on the
+## tween's last frame (the menu hand, everything in-game) use a plain ease-out
+## with no overshoot, so they need no fraction like this.
+const THROW_LAND_FRACTION := 0.58
 
 # ── Menu hands (each entry becomes one card button; `id` names its action) ────
 const MAIN_HAND := [
@@ -319,7 +323,10 @@ func throw_title_cards() -> void:
 			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 		throw.tween_property(card, "scale", Vector2(TITLE_CARD_SCALE, TITLE_CARD_SCALE), THROW_TIME) \
 			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-		throw.tween_callback(play_place_sound).set_delay(THROW_TIME * LAND_SOUND_FRACTION)
+		# Throws overlap, so the landing sound rides on each card's own tween
+		# instead of an awaited one — same clock, so it still fires on the
+		# exact frame that card touches down.
+		throw.tween_callback(play_place_sound).set_delay(THROW_TIME * THROW_LAND_FRACTION)
 
 		await get_tree().create_timer(THROW_STAGGER).timeout
 
@@ -398,7 +405,7 @@ func fly_in_hand_cards(entries: Array) -> void:
 			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 		fly.tween_property(card, "rotation_degrees", target_rotation, HAND_FLY_TIME) \
 			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-		fly.tween_callback(play_place_sound).set_delay(HAND_FLY_TIME * LAND_SOUND_FRACTION)
+		fly.tween_callback(play_place_sound).set_delay(HAND_FLY_TIME)
 
 		await get_tree().create_timer(HAND_STAGGER).timeout
 

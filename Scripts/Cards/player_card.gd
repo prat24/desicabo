@@ -80,6 +80,7 @@ func set_drag_hovered(hovered: bool) -> void:
 	var target_scale: Vector2 = resting_scale
 
 	if hovered:
+		HoverSfx.play_hover()
 		target_position.y -= drag_hover_lift * hover_lift_sign
 		target_scale = resting_scale * hover_scale_multiplier
 		z_index = 100

@@ -24,6 +24,7 @@ func _process(_delta: float) -> void:
 
 func _on_area_2d_mouse_entered() -> void:
 	is_shader_hovering = true
+	HoverSfx.play_hover()
 	CardShader.set_hover(sprite, 1.0)
 	CardShader.set_inset(sprite, 0.0)
 	hovered.emit(self)

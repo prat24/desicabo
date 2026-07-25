@@ -11,9 +11,6 @@ const DEAL_FLY_TIME = 0.28
 const DEAL_STAGGER_TIME = 0.07
 const DISCARD_FLY_TIME = 0.34
 const SWAP_FLY_TIME = 0.4
-## Ease-out flights visually land before the tween ends; play the landing
-## sound at this fraction of the flight time so audio matches the visual.
-const LAND_SOUND_FRACTION = 0.65
 ## Horizontal offset of the deck and discard slots from the screen center.
 const BOARD_SLOT_OFFSET_X = 375.0
 ## Special-power dim overlay z-index; the selectable hand is raised above it.
@@ -176,16 +173,15 @@ func setup_audio() -> void:
 	add_child(sfx_slide)
 
 
+## The two card cues. `slide` goes on the frame a card starts moving, `place`
+## on the frame it lands — both are called next to the tween they belong to,
+## never on a separate timer, so the audio cannot drift from the animation.
 func play_place_sound() -> void:
 	sfx_place.play()
 
 
 func play_slide_sound() -> void:
 	sfx_slide.play()
-
-
-func schedule_place_sound(delay: float) -> void:
-	get_tree().create_timer(delay).timeout.connect(play_place_sound)
 
 
 func deal_initial_hands_animated() -> void:
@@ -205,7 +201,6 @@ func deal_initial_hands_animated() -> void:
 			if deck.is_empty():
 				return
 
-			schedule_place_sound(initial_deal_fly_time * LAND_SOUND_FRACTION)
 			await hand.animate_deal_card(
 				slot,
 				deck.pop_front(),
@@ -214,6 +209,7 @@ func deal_initial_hands_animated() -> void:
 				deck_scale,
 				deck_rotation
 			)
+			play_place_sound()
 			if initial_deal_stagger > 0.0:
 				await get_tree().create_timer(initial_deal_stagger).timeout
 
@@ -257,7 +253,7 @@ func show_turn_prompt() -> void:
 	else:
 		# Shown once per other player in their orientation, so each showing
 		# runs at half time to keep the total the same.
-		var prompt_text := "Player %d's turn now. Everyone else, look away!" % current_player
+		var prompt_text := "Player %d's turn now.\nEveryone else, look away!" % current_player
 		for player in get_other_players(current_player):
 			await show_fullscreen_prompt(prompt_text, turn_prompt_time * 0.5, 0.15, player)
 
@@ -613,6 +609,7 @@ func check_special_card_effect() -> void:
 			remove_special_overlay()
 			play_slide_sound()
 			await jumble_hand.jumble_cards()
+			play_place_sound()
 
 		"7":
 			var swap_hand := await get_power_target_hand("Choose a player who\nyou wish to swap with")
