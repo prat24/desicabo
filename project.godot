@@ -15,11 +15,16 @@ run/main_scene="res://Scenes/UI/main_menu.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
 config/icon="res://icon.svg"
 
+[autoload]
+
+Music="*res://Scripts/Audio/music_player.gd"
+
 [display]
 
 window/size/viewport_width=1080
 window/size/viewport_height=1920
 window/stretch/mode="viewport"
+window/stretch/aspect="expand"
 window/handheld/orientation=1
 
 [input_devices]
@@ -34,7 +39,7 @@ pointing/emulate_touch_from_mouse=true
 
 rendering_device/driver.windows="d3d12"
 renderer/rendering_method="mobile"
-environment/defaults/default_clear_color=Color(0.08, 0.12, 0.14, 1)
+environment/defaults/default_clear_color=Color(0, 0, 0, 1)
 
 [shader_globals]
 

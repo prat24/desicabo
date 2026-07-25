@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://3ajaxsjg3rj4"
-path="res://.godot/imported/playingCardBacks.png-ec3329a8dfbbfab3e51fa0aaa817ae00.ctex"
+uid="uid://j7sxx3flctjj"
+path="res://.godot/imported/Online.png-560ed7ea092aa7d978265fda43143643.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://Assets/Art/Spritesheets/playingCardBacks.png"
-dest_files=["res://.godot/imported/playingCardBacks.png-ec3329a8dfbbfab3e51fa0aaa817ae00.ctex"]
+source_file="res://Assets/Art/PNG/TitleCards/Online.png"
+dest_files=["res://.godot/imported/Online.png-560ed7ea092aa7d978265fda43143643.ctex"]
 
 [params]
 

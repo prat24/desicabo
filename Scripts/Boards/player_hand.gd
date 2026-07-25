@@ -34,7 +34,7 @@ func _ready() -> void:
 	if auto_deal:
 		deal_from_deck(CardDeck.create_shuffled_deck())
 	arrange_cards()
-	if !Engine.is_editor_hint() && !auto_deal:
+	if not Engine.is_editor_hint() and not auto_deal:
 		for card in cards:
 			card.visible = false
 
@@ -72,7 +72,9 @@ func animate_deal_card(
 	card.visible = true
 	card.global_position = deck_global_pos
 	card.rotation_degrees = 0.0
-	card.scale = deck_scale
+	# The card's child sprite is pre-scaled, so divide that out to spawn at
+	# exactly the deck pile's on-screen size.
+	card.scale = deck_scale / card.sprite.scale.x
 	card.z_index = 100
 
 	var target_global: Vector2 = to_global(card.resting_position)
@@ -153,7 +155,7 @@ func jumble_cards() -> void:
 	var card_data: Array[Dictionary] = []
 	for card in cards:
 		rest_positions.append(card.resting_position)
-		card_data.append({"rank": card.rank, "suit": card.suit, "texture": card.front_texture})
+		card_data.append(card.to_card_data())
 
 	# Build a shuffled index mapping (guaranteed to change at least one card).
 	var new_order: Array = range(count)

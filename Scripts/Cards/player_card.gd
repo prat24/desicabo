@@ -1,18 +1,14 @@
 ## PlayerCard — a card held in a player's hand.
-## Handles face state, drag-hover lift animation, and resting position.
-extends Node2D
+## Adds drag-hover lift animation and resting layout state on top of Card.
+extends Card
 class_name PlayerCard
 
-@export var back_texture: Texture2D
 @export var drag_hover_lift: float = 45.0
 @export var drag_hover_time: float = 0.12
 @export var hover_scale_multiplier: float = 1.06
-@export var tilt_intensity: float = 10.0
+## Lift used for the calm "selected for swap" state (no glow/tilt/scale).
+@export var selected_lift: float = 30.0
 
-var rank: String = ""
-var suit: String = ""
-var front_texture: Texture2D
-var is_face_down: bool = true
 var resting_position: Vector2 = Vector2.ZERO
 var resting_rotation_degrees: float = 0.0
 var resting_scale: Vector2 = Vector2.ONE
@@ -22,104 +18,56 @@ var is_special_selected: bool = false
 var drag_hover_tween: Tween
 var scale_tween: Tween
 var player_id: int = 1
+## +1 lifts the card up-screen (bottom hand); -1 lifts it down-screen (top hand).
 var hover_lift_sign: float = 1.0
 
-@onready var sprite: Sprite2D = $Sprite2D
-@onready var shadow: Sprite2D = $Shadow
+
+func _init() -> void:
+	tilt_intensity = 10.0
 
 
 func _ready() -> void:
+	super()
 	add_to_group("player_cards")
 	resting_position = position
 	resting_scale = scale
 	resting_z_index = z_index
-	CardShader.apply(sprite, randf() * 1000.0)
-	CardShader.set_inset(sprite, 0.02)
-	_sync_shadow()
-	show_back()
-
-
-func _sync_shadow() -> void:
-	if shadow == null:
-		return
-	shadow.texture = sprite.texture
-	shadow.scale = sprite.scale
-
-
-func setup_card(card_rank: String, card_suit: String, card_texture: Texture2D) -> void:
-	rank = card_rank
-	suit = card_suit
-	front_texture = card_texture
-	show_back()
-
-
-func show_back() -> void:
-	is_face_down = true
-	sprite.texture = back_texture
-	_sync_shadow()
-
-
-func show_front() -> void:
-	is_face_down = false
-	sprite.texture = front_texture
-	_sync_shadow()
-
-
-func animate_flip_to_back(duration: float = 0.24) -> void:
-	if front_texture == null:
-		show_back()
-		return
-
-	var half_duration: float = maxf(0.01, duration * 0.5)
-	var base_scale: Vector2 = sprite.scale
-
-	var flip_tween: Tween = create_tween()
-	flip_tween.set_trans(Tween.TRANS_BACK)
-	flip_tween.set_ease(Tween.EASE_IN_OUT)
-	flip_tween.tween_property(sprite, "scale:x", 0.08, half_duration)
-	flip_tween.tween_callback(Callable(self, "show_back"))
-	flip_tween.tween_property(sprite, "scale:x", base_scale.x, half_duration)
-	await flip_tween.finished
-	_sync_shadow()
-
-
-func animate_flip_to_front(duration: float = 0.24) -> void:
-	if front_texture == null:
-		show_front()
-		return
-
-	var half_duration: float = maxf(0.01, duration * 0.5)
-	var base_scale: Vector2 = sprite.scale
-
-	var flip_tween: Tween = create_tween()
-	flip_tween.set_trans(Tween.TRANS_BACK)
-	flip_tween.set_ease(Tween.EASE_IN_OUT)
-	flip_tween.tween_property(sprite, "scale:x", 0.08, half_duration)
-	flip_tween.tween_callback(Callable(self, "show_front"))
-	flip_tween.tween_property(sprite, "scale:x", base_scale.x, half_duration)
-	await flip_tween.finished
-	_sync_shadow()
-
-
-func get_card_name() -> String:
-	return suit + " " + rank
 
 
 func set_resting_position(new_position: Vector2) -> void:
 	resting_position = new_position
-	if !is_drag_hovered:
+	if not is_drag_hovered:
 		position = resting_position
 
 
 func set_resting_z_index(new_z_index: int) -> void:
 	resting_z_index = new_z_index
-	if !is_drag_hovered:
+	if not is_drag_hovered:
 		z_index = resting_z_index
 
 
+## Calm selection state for the 7-swap: the card sits slightly lifted and
+## steady — no hover glow, tilt, or scale — while the player picks the target.
 func set_special_selected(selected: bool) -> void:
+	if is_special_selected == selected:
+		return
+
 	is_special_selected = selected
-	set_drag_hovered(selected)
+
+	# Clear any hover look the card had when it was clicked.
+	is_drag_hovered = false
+	CardShader.set_hover(sprite, 0.0)
+	CardShader.reset_tilt(sprite)
+	CardShader.set_inset(sprite, CardShader.RESTING_INSET)
+
+	var target_position: Vector2 = resting_position
+	if selected:
+		target_position.y -= selected_lift * hover_lift_sign
+		z_index = 100
+	else:
+		z_index = resting_z_index
+
+	tween_toward(target_position, resting_scale)
 
 
 func set_drag_hovered(hovered: bool) -> void:
@@ -127,11 +75,6 @@ func set_drag_hovered(hovered: bool) -> void:
 		return
 
 	is_drag_hovered = hovered
-
-	if drag_hover_tween:
-		drag_hover_tween.kill()
-	if scale_tween:
-		scale_tween.kill()
 
 	var target_position: Vector2 = resting_position
 	var target_scale: Vector2 = resting_scale
@@ -144,9 +87,18 @@ func set_drag_hovered(hovered: bool) -> void:
 		CardShader.set_hover(sprite, 0.6)
 	else:
 		z_index = resting_z_index
-		CardShader.tween_inset(self, sprite, 0.02, drag_hover_time)
+		CardShader.tween_inset(self, sprite, CardShader.RESTING_INSET, drag_hover_time)
 		CardShader.set_hover(sprite, 0.0)
 		CardShader.reset_tilt(sprite)
+
+	tween_toward(target_position, target_scale)
+
+
+func tween_toward(target_position: Vector2, target_scale: Vector2) -> void:
+	if drag_hover_tween:
+		drag_hover_tween.kill()
+	if scale_tween:
+		scale_tween.kill()
 
 	drag_hover_tween = create_tween()
 	drag_hover_tween.set_trans(Tween.TRANS_BACK)
@@ -157,32 +109,3 @@ func set_drag_hovered(hovered: bool) -> void:
 	scale_tween.set_trans(Tween.TRANS_BACK)
 	scale_tween.set_ease(Tween.EASE_OUT)
 	scale_tween.tween_property(self, "scale", target_scale, drag_hover_time)
-
-
-func update_shader_tilt(global_mouse: Vector2) -> void:
-	var local_mouse: Vector2 = sprite.to_local(global_mouse)
-	CardShader.set_tilt(sprite, local_mouse, tilt_intensity)
-
-
-func get_collision_rect() -> Rect2:
-	return get_sprite_global_rect(sprite)
-
-
-func get_sprite_global_rect(card_sprite: Sprite2D) -> Rect2:
-	var local_rect: Rect2 = card_sprite.get_rect()
-	var corners: Array[Vector2] = [
-		local_rect.position,
-		Vector2(local_rect.end.x, local_rect.position.y),
-		local_rect.end,
-		Vector2(local_rect.position.x, local_rect.end.y)
-	]
-	var first_corner: Vector2 = card_sprite.global_transform * corners[0]
-	var min_position: Vector2 = first_corner
-	var max_position: Vector2 = first_corner
-
-	for corner_index in range(1, corners.size()):
-		var global_corner: Vector2 = card_sprite.global_transform * corners[corner_index]
-		min_position = min_position.min(global_corner)
-		max_position = max_position.max(global_corner)
-
-	return Rect2(min_position, max_position - min_position)

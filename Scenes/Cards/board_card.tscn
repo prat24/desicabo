@@ -6,27 +6,6 @@
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_2nti4"]
 size = Vector2(132, 191)
 
-[sub_resource type="Animation" id="Animation_dpxgs"]
-resource_name = "flip_to_front"
-length = 0.34
-tracks/0/type = "value"
-tracks/0/imported = false
-tracks/0/enabled = true
-tracks/0/path = NodePath("Sprite2D:scale")
-tracks/0/interp = 1
-tracks/0/loop_wrap = true
-tracks/0/keys = {
-"times": PackedFloat32Array(0, 0.17, 0.34),
-"transitions": PackedFloat32Array(1, 1, 1),
-"update": 0,
-"values": [Vector2(1.8857143, 1.8857143), Vector2(0.08, 1.8857143), Vector2(1.8857143, 1.8857143)]
-}
-
-[sub_resource type="AnimationLibrary" id="AnimationLibrary_8wj8q"]
-_data = {
-&"flip_to_front": SubResource("Animation_dpxgs")
-}
-
 [node name="Card" type="Node2D" unique_id=1832272288]
 script = ExtResource("1_ws51j")
 back_texture = ExtResource("3_3sxif")
@@ -49,9 +28,6 @@ scale = Vector2(2, 2)
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Area2D" unique_id=1256057276]
 position = Vector2(0, 1.5)
 shape = SubResource("RectangleShape2D_2nti4")
-
-[node name="AnimationPlayer" type="AnimationPlayer" parent="." unique_id=108162510]
-libraries/ = SubResource("AnimationLibrary_8wj8q")
 
 [connection signal="mouse_entered" from="Area2D" to="." method="_on_area_2d_mouse_entered"]
 [connection signal="mouse_exited" from="Area2D" to="." method="_on_area_2d_mouse_exited"]

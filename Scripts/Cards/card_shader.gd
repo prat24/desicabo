@@ -3,6 +3,8 @@ class_name CardShader
 extends RefCounted
 
 const MATERIAL := preload("res://Assets/Shaders/card_fov_material.tres")
+## Inset every card rests at; hover/drag states animate it to 0.
+const RESTING_INSET := 0.02
 
 static func apply(sprite: Sprite2D, rand_seed: float = 0.0) -> ShaderMaterial:
 	var mat := MATERIAL.duplicate() as ShaderMaterial
