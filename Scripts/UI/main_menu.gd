@@ -1,13 +1,15 @@
 ## MainMenu — title screen. The title text matches the background color, so it
 ## starts invisible; card backs get thrown down beneath the text layer,
-## revealing it. Then a fanned hand of menu card buttons rises from the bottom
-## (Local / Online / Settings) with the in-game hand-hover lift. Only Local is
-## clickable for now.
+## revealing it. Then a fanned hand of card buttons rises from the bottom:
+## Local / Online / Settings. Picking Local slides that hand away and deals a
+## second hand asking how many players (2 / 3 / 4). Only Local, 2, and 3 are
+## live for now.
 extends Control
 
 const GAME_SCENE_PATH := "res://Scenes/Managers/game_manager.tscn"
 const PLAYER_CARD_SCENE := preload("res://Scenes/Cards/player_card.tscn")
 const CARD_BACK_TEXTURE := preload("res://Assets/Art/PNG/Cards/cardBack_main.png")
+const UI_THEME := preload("res://Assets/Themes/clean_ui.tres")
 
 # ── Title card throw ──────────────────────────────────────────────────────────
 ## The pile is two staggered, jittered rows covering the two-line title —
@@ -26,11 +28,16 @@ const OFFSCREEN_MARGIN := 320.0
 ## so the landing sound plays at this fraction of the flight time.
 const LAND_SOUND_FRACTION := 0.65
 
-# ── Menu hand (the card buttons) ──────────────────────────────────────────────
-const MENU_HAND := [
-	{"texture": preload("res://Assets/Art/PNG/TitleCards/Local.png"), "enabled": true},
-	{"texture": preload("res://Assets/Art/PNG/TitleCards/Online.png"), "enabled": false},
-	{"texture": preload("res://Assets/Art/PNG/TitleCards/Settings.png"), "enabled": false},
+# ── Menu hands (each entry becomes one card button; `id` names its action) ────
+const MAIN_HAND := [
+	{"id": "local", "texture": preload("res://Assets/Art/PNG/TitleCards/Local.png"), "enabled": true},
+	{"id": "online", "texture": preload("res://Assets/Art/PNG/TitleCards/Online.png"), "enabled": false},
+	{"id": "settings", "texture": preload("res://Assets/Art/PNG/TitleCards/Settings.png"), "enabled": false},
+]
+const PLAYER_COUNT_HAND := [
+	{"id": "2", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts2.png"), "enabled": true},
+	{"id": "3", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts3.png"), "enabled": true},
+	{"id": "4", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts4.png"), "enabled": false},
 ]
 const HAND_CARD_SCALE := 1.25
 const HAND_CARD_SPACING := 250.0
@@ -42,22 +49,27 @@ const HAND_ARC_DROP := 18.0
 const HAND_ROTATION_STEP_DEGREES := 8.0
 const HAND_FLY_TIME := 0.45
 const HAND_STAGGER := 0.12
+const HAND_SLIDE_OUT_TIME := 0.3
 const DISABLED_CARD_MODULATE := Color(0.45, 0.45, 0.45)
 
 @onready var card_pile: Node2D = $CardPile
 @onready var title_label: Label = $TitleLabel
 @onready var hand_cards_root: Node2D = $HandCards
 
-var sfx: AudioStreamPlayer
+var sfx_place: AudioStreamPlayer
+var sfx_slide: AudioStreamPlayer
+var hand_cards: Array[PlayerCard] = []
 var clickable_cards: Array[PlayerCard] = []
 var hovered_card: PlayerCard
-var intro_done := false
+var input_enabled := false
 var is_starting_game := false
 
 
 func _ready() -> void:
-	sfx = CardSfx.create_place_player()
-	add_child(sfx)
+	sfx_place = CardSfx.create_place_player()
+	sfx_slide = CardSfx.create_slide_player()
+	add_child(sfx_place)
+	add_child(sfx_slide)
 	run_intro()
 
 
@@ -67,17 +79,32 @@ func run_intro() -> void:
 	fade_in_from_black()
 	await throw_title_cards()
 	Music.start()
-	await fly_in_hand_cards()
-	intro_done = true
+	await fly_in_hand_cards(MAIN_HAND)
+	input_enabled = true
+
+
+## Smooth arrival (from launch or from a finished game): start black, fade in
+## while the title cards begin to fly.
+func fade_in_from_black() -> void:
+	var fade := ColorRect.new()
+	fade.color = Color(0.0, 0.0, 0.0, 1.0)
+	fade.size = get_viewport_rect().size
+	fade.z_index = 500
+	fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(fade)
+
+	var fade_tween := create_tween()
+	fade_tween.tween_property(fade, "color:a", 0.0, 0.4)
+	fade_tween.tween_callback(fade.queue_free)
 
 
 func _process(_delta: float) -> void:
 	# The card shader's hover tilt reads this global uniform. The game updates
-	# it every frame; without it here the menu ace tilts toward a stale point
-	# far off the card and spins wildly on hover.
+	# it every frame; without it here the menu cards tilt toward a stale point
+	# far off the card and spin wildly on hover.
 	RenderingServer.global_shader_parameter_set("mouse_screen_pos", get_viewport().get_mouse_position())
 
-	if not intro_done or is_starting_game:
+	if not input_enabled or is_starting_game:
 		return
 
 	var mouse_position := get_global_mouse_position()
@@ -98,7 +125,7 @@ func _process(_delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if not intro_done or is_starting_game:
+	if not input_enabled or is_starting_game:
 		return
 
 	var mouse_event := event as InputEventMouseButton
@@ -109,8 +136,19 @@ func _input(event: InputEvent) -> void:
 	var tap_position := get_global_mouse_position()
 	for card in clickable_cards:
 		if get_card_resting_rect(card).has_point(tap_position):
-			start_game_with_card(card)
+			handle_card_pressed(card)
 			return
+
+
+## Card buttons carry their action in `rank` (set from the hand entry's id).
+func handle_card_pressed(card: PlayerCard) -> void:
+	match card.rank:
+		"local":
+			show_player_count_picker(card)
+		"2":
+			start_game_with_card(card, 2)
+		"3":
+			start_game_with_card(card, 3)
 
 
 ## Hit-test against the card's resting spot, not its animated rect: testing
@@ -119,21 +157,6 @@ func _input(event: InputEvent) -> void:
 func get_card_resting_rect(card: PlayerCard) -> Rect2:
 	var card_size: Vector2 = card.sprite.texture.get_size() * card.sprite.scale.abs() * card.resting_scale
 	return Rect2(card.resting_position - card_size * 0.5, card_size)
-
-
-## Smooth arrival (from launch or from a finished game): start black, fade in
-## while the title cards begin to fly.
-func fade_in_from_black() -> void:
-	var fade := ColorRect.new()
-	fade.color = Color(0.0, 0.0, 0.0, 1.0)
-	fade.size = get_viewport_rect().size
-	fade.z_index = 500
-	fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(fade)
-
-	var fade_tween := create_tween()
-	fade_tween.tween_property(fade, "color:a", 0.0, 0.4)
-	fade_tween.tween_callback(fade.queue_free)
 
 
 # ── Title card throw ──────────────────────────────────────────────────────────
@@ -202,17 +225,17 @@ func random_offscreen_start(screen: Vector2) -> Vector2:
 			return Vector2(randf_range(0.0, screen.x), -OFFSCREEN_MARGIN)
 
 
-# ── Menu hand ─────────────────────────────────────────────────────────────────
+# ── Menu hands ────────────────────────────────────────────────────────────────
 
-func fly_in_hand_cards() -> void:
+func fly_in_hand_cards(entries: Array) -> void:
 	var screen: Vector2 = get_viewport_rect().size
-	var mid: float = (MENU_HAND.size() - 1) * 0.5
+	var mid: float = (entries.size() - 1) * 0.5
 
-	for i in range(MENU_HAND.size()):
-		var entry: Dictionary = MENU_HAND[i]
+	for i in range(entries.size()):
+		var entry: Dictionary = entries[i]
 		var card: PlayerCard = PLAYER_CARD_SCENE.instantiate()
 		hand_cards_root.add_child(card)
-		card.setup_card("", "", entry["texture"])
+		card.setup_card(entry["id"], "", entry["texture"])
 		card.show_front()
 
 		var fan_offset := i - mid
@@ -231,6 +254,7 @@ func fly_in_hand_cards() -> void:
 		card.position = Vector2(target.x, screen.y + 500.0)
 		card.rotation_degrees = 0.0
 
+		hand_cards.append(card)
 		if entry["enabled"]:
 			clickable_cards.append(card)
 		else:
@@ -248,8 +272,55 @@ func fly_in_hand_cards() -> void:
 	await get_tree().create_timer(HAND_FLY_TIME).timeout
 
 
-func start_game_with_card(card: PlayerCard) -> void:
+## The current hand drops off the bottom of the screen and is freed.
+func slide_out_hand_cards() -> void:
+	hovered_card = null
+	clickable_cards.clear()
+
+	play_slide_sound()
+	var slide := create_tween().set_parallel(true)
+	for card in hand_cards:
+		slide.tween_property(card, "position:y", card.position.y + 800.0, HAND_SLIDE_OUT_TIME) \
+			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	await slide.finished
+
+	for card in hand_cards:
+		card.queue_free()
+	hand_cards.clear()
+
+
+func show_player_count_picker(pressed_card: PlayerCard) -> void:
+	input_enabled = false
+	pressed_card.set_drag_hovered(true)
+	play_place_sound()
+	await get_tree().create_timer(0.15).timeout
+
+	await slide_out_hand_cards()
+	show_player_count_label()
+	await fly_in_hand_cards(PLAYER_COUNT_HAND)
+	input_enabled = true
+
+
+func show_player_count_label() -> void:
+	var screen: Vector2 = get_viewport_rect().size
+	var label := Label.new()
+	label.text = "How many players?"
+	label.theme = UI_THEME
+	label.add_theme_font_size_override("font_size", 60)
+	label.add_theme_color_override("font_color", Color(0.94, 0.9, 0.82))
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.size = Vector2(screen.x, 80.0)
+	label.position = Vector2(0.0, screen.y - 560.0)
+	label.modulate.a = 0.0
+	add_child(label)
+
+	var fade_tween := create_tween()
+	fade_tween.tween_property(label, "modulate:a", 1.0, 0.3)
+
+
+func start_game_with_card(card: PlayerCard, player_count: int) -> void:
 	is_starting_game = true
+	GameConfig.player_count = player_count
 	card.set_drag_hovered(true)
 	play_place_sound()
 
@@ -269,4 +340,8 @@ func start_game_with_card(card: PlayerCard) -> void:
 
 
 func play_place_sound() -> void:
-	sfx.play()
+	sfx_place.play()
+
+
+func play_slide_sound() -> void:
+	sfx_slide.play()

@@ -3,7 +3,8 @@
 extends Node2D
 
 const CARD_COLLISION_MASK = 1
-const NORMAL_CARD_SCALE = Vector2(1.15, 1.15)
+## Matches the title screen's card buttons (their 1.25 on the same card scene).
+const NORMAL_CARD_SCALE = Vector2(1.25, 1.25)
 const HOVERED_CARD_SCALE = NORMAL_CARD_SCALE * 1.05
 const SNAP_TIME = 0.18
 const DEAL_FLY_TIME = 0.28
@@ -18,11 +19,23 @@ const BOARD_SLOT_OFFSET_X = 375.0
 ## Special-power dim overlay z-index; the selectable hand is raised above it.
 const OVERLAY_Z_INDEX = 150
 const RAISED_HAND_Z_INDEX = 200
+# ── Turn-spotlight layers: dark overlay, active hand above it, board cards on
+# top (the drawn card is always the topmost thing on screen). ────────────────
+const TURN_FOCUS_OVERLAY_Z = 100
+const FOCUSED_HAND_Z = 110
+const FOCUSED_DISCARD_Z = 230
+const FLYING_CARD_Z = 240
+const FOCUSED_DRAW_CARD_Z = 250
+## How far the drawn card steps away from screen center in 3-player mode so
+## it never covers the tappable discard pile.
+const DRAW_CARD_TURN_OFFSET = 160.0
+## Beige used by the title screen labels and the seven skip button.
+const PROMPT_ACCENT_COLOR = Color(0.94, 0.9, 0.82)
 const MAIN_MENU_SCENE = "res://Scenes/UI/main_menu.tscn"
 
 const UI_THEME = preload("res://Assets/Themes/clean_ui.tres")
 
-@export_range(0.0, 15.0, 0.1) var pre_game_reveal_time: float = 5.0
+@export_range(0.0, 15.0, 0.1) var pre_game_reveal_time: float = 4.0
 @export_range(0.1, 0.8, 0.01) var initial_deal_fly_time: float = DEAL_FLY_TIME
 @export_range(0.0, 0.3, 0.01) var initial_deal_stagger: float = DEAL_STAGGER_TIME
 @export_range(0.0, 1.0, 0.01) var pre_game_dim_alpha: float = 0.35
@@ -38,12 +51,14 @@ enum TurnState {
 	WAITING_FOR_DROP,
 	ANIMATING,
 	SPECIAL_7,
+	CHOOSING_PLAYER,
 	GAME_OVER
 }
 
 var turn_state: TurnState = TurnState.DEALING
 var deck: Array[Dictionary] = []
-var current_player: int = 1  ## 1 or 2 — whose turn it is.
+var player_count: int = 2
+var current_player: int = 1  ## Whose turn it is (1..player_count).
 
 var screen_size: Vector2
 var center_draw_position: Vector2 = Vector2.ZERO
@@ -55,6 +70,7 @@ var hovered_player_card: PlayerCard
 var intro_dim_overlay: ColorRect
 var special_overlay: ColorRect
 var game_over_overlay: ColorRect
+var turn_focus_overlay: ColorRect
 var is_returning_to_menu := false
 
 # ── Seven-power selection state ───────────────────────────────────────────────
@@ -63,6 +79,10 @@ var hovered_special_card: PlayerCard = null
 var seven_selecting_opponent: bool = false
 var seven_power_done: bool = false
 var seven_skip_button: Button
+## The opponent hand a K/J/7 power acts on this turn.
+var seven_target_hand: PlayerHand
+## Player picked during CHOOSING_PLAYER (0 while undecided).
+var chosen_target_player: int = 0
 
 var sfx_place: AudioStreamPlayer
 var sfx_slide: AudioStreamPlayer
@@ -77,9 +97,11 @@ var sfx_slide: AudioStreamPlayer
 @onready var flying_card: BoardCard = $FlyingCard
 @onready var player1_hand: PlayerHand = $PlayerHand
 @onready var player2_hand: PlayerHand = $Player2Hand
+@onready var player3_hand: PlayerHand = $Player3Hand
 
 
 func _ready() -> void:
+	player_count = clampi(GameConfig.player_count, 2, 3)
 	screen_size = get_viewport_rect().size
 	layout_board_for_screen()
 	center_draw_position = center_draw_card.global_position
@@ -105,14 +127,32 @@ func _ready() -> void:
 
 ## Anchor the board to the real screen size: the scene is authored for
 ## 1080x1920, but stretch aspect "expand" makes the viewport taller on modern
-## phones. Keeps the middle row centered and Player 2's hand pinned to the top.
+## phones. Two players: middle row centered, Player 2 pinned to the top.
+## Three players: the board becomes a sideways column on the left, and
+## Player 3's hand fans along the right edge (viewed from the right side).
 func layout_board_for_screen() -> void:
 	var center: Vector2 = screen_size * 0.5
-	deck_sprite.position = Vector2(center.x - BOARD_SLOT_OFFSET_X, center.y)
-	center_draw_card.position = center
-	discard_pile_sprite.position = Vector2(center.x + BOARD_SLOT_OFFSET_X, center.y)
-	discard_top_card.position = discard_pile_sprite.position
 	player2_hand.position = screen_size
+	player3_hand.visible = player_count == 3
+
+	if player_count == 3:
+		player3_hand.position = Vector2(0.0, screen_size.y)
+		player3_hand.rotation_degrees = -90.0
+
+		# Deck and discard sit close together in a sideways column on the
+		# left; the drawn card goes to the screen center, oriented per turn.
+		var column_x := 240.0
+		for board_node: Node2D in [deck_sprite, discard_pile_sprite, discard_top_card, flying_card]:
+			board_node.rotation_degrees = 90.0
+		deck_sprite.position = Vector2(column_x, center.y - 180.0)
+		center_draw_card.position = center
+		discard_pile_sprite.position = Vector2(column_x, center.y + 180.0)
+	else:
+		deck_sprite.position = Vector2(center.x - BOARD_SLOT_OFFSET_X, center.y)
+		center_draw_card.position = center
+		discard_pile_sprite.position = Vector2(center.x + BOARD_SLOT_OFFSET_X, center.y)
+
+	discard_top_card.position = discard_pile_sprite.position
 
 
 ## Smooth arrival from the title screen: it fades to black before the scene
@@ -153,87 +193,99 @@ func schedule_place_sound(delay: float) -> void:
 func deal_initial_hands_animated() -> void:
 	turn_state = TurnState.DEALING
 
-	player1_hand.arrange_cards()
-	player2_hand.arrange_cards()
-
+	var hands := get_all_hands()
 	var deck_pos: Vector2 = deck_sprite.global_position
 	var deck_scale: Vector2 = deck_sprite.scale
-	player1_hand.stack_cards_at_deck(deck_pos)
-	player2_hand.stack_cards_at_deck(deck_pos)
+	var deck_rotation: float = deck_sprite.rotation_degrees
+	for hand in hands:
+		hand.arrange_cards()
+		hand.stack_cards_at_deck(deck_pos, deck_rotation)
 
 	var slots_per_hand: int = player1_hand.cards.size()
 	for slot in range(slots_per_hand):
-		if deck.is_empty():
-			break
+		for hand in hands:
+			if deck.is_empty():
+				return
 
-		schedule_place_sound(initial_deal_fly_time * LAND_SOUND_FRACTION)
-		await player1_hand.animate_deal_card(
-			slot,
-			deck.pop_front(),
-			deck_pos,
-			initial_deal_fly_time,
-			deck_scale
-		)
-		if initial_deal_stagger > 0.0:
-			await get_tree().create_timer(initial_deal_stagger).timeout
-
-		if deck.is_empty():
-			break
-
-		schedule_place_sound(initial_deal_fly_time * LAND_SOUND_FRACTION)
-		await player2_hand.animate_deal_card(
-			slot,
-			deck.pop_front(),
-			deck_pos,
-			initial_deal_fly_time,
-			deck_scale
-		)
-		if initial_deal_stagger > 0.0 and slot < slots_per_hand - 1:
-			await get_tree().create_timer(initial_deal_stagger).timeout
+			schedule_place_sound(initial_deal_fly_time * LAND_SOUND_FRACTION)
+			await hand.animate_deal_card(
+				slot,
+				deck.pop_front(),
+				deck_pos,
+				initial_deal_fly_time,
+				deck_scale,
+				deck_rotation
+			)
+			if initial_deal_stagger > 0.0:
+				await get_tree().create_timer(initial_deal_stagger).timeout
 
 
-## Both players peek at their hands before Player 1's first turn; a prompt
-## before each reveal warns the other player to look away.
+## Every player peeks at their hand before Player 1's first turn; a prompt
+## before each reveal warns the other player(s) to look away.
 func run_pre_game_reveals() -> void:
-	await show_reveal_prompt(1)
-	await run_hand_reveal(player1_hand)
-	await show_reveal_prompt(2)
-	await run_hand_reveal(player2_hand)
+	for player in range(1, player_count + 1):
+		await show_reveal_prompt(player)
+		await run_hand_reveal(get_hand(player))
 
 
 func show_reveal_prompt(player_number: int) -> void:
-	var other_player := 3 - player_number
-	await show_fullscreen_prompt(
-		"Time for Player %d to see their cards!\nPlayer %d look away!" % [player_number, other_player],
-		reveal_prompt_time,
-		0.25,
-		other_player
-	)
+	if player_count == 2:
+		# Face the player who must look away.
+		var other_player := 3 - player_number
+		await show_fullscreen_prompt(
+			"Time for Player %d to see their cards!\nPlayer %d look away!" % [player_number, other_player],
+			reveal_prompt_time,
+			0.25,
+			other_player
+		)
+	else:
+		# Shown once per other player in their orientation, so each showing
+		# runs at half time to keep the total the same.
+		var prompt_text := "Time for Player %d to see their cards!\nEveryone else look away!" % player_number
+		for player in get_other_players(player_number):
+			await show_fullscreen_prompt(prompt_text, reveal_prompt_time * 0.5, 0.25, player)
 
 
 func show_turn_prompt() -> void:
-	var other_player := 3 - current_player
-	await show_fullscreen_prompt(
-		"Player %d's turn now.\nPlayer %d should look away!" % [current_player, other_player],
-		turn_prompt_time,
-		0.15,
-		other_player
-	)
+	if player_count == 2:
+		# Face the previous player, who must now look away.
+		var other_player := 3 - current_player
+		await show_fullscreen_prompt(
+			"Player %d's turn now.\nPlayer %d, look away!" % [current_player, other_player],
+			turn_prompt_time,
+			0.15,
+			other_player
+		)
+	else:
+		# Shown once per other player in their orientation, so each showing
+		# runs at half time to keep the total the same.
+		var prompt_text := "Player %d's turn now. Everyone else, look away!" % current_player
+		for player in get_other_players(current_player):
+			await show_fullscreen_prompt(prompt_text, turn_prompt_time * 0.5, 0.15, player)
+
+
+## Every player number except `player`, in ascending order.
+func get_other_players(player: int) -> Array[int]:
+	var others: Array[int] = []
+	for candidate in range(1, player_count + 1):
+		if candidate != player:
+			others.append(candidate)
+	return others
 
 
 ## Near-black full-screen overlay with centered white text that fades in,
 ## holds, fades out, and cleans itself up. The text is rotated toward
 ## `facing_player` — the one who must act on it (Player 2 sits at the top of
-## the screen, so text facing them is upside down).
-func show_fullscreen_prompt(prompt_text: String, hold_time: float, fade_time: float = 0.25, facing_player: int = 1) -> void:
+## the screen, Player 3 views from the right edge).
+func show_fullscreen_prompt(prompt_text: String, hold_time: float, fade_time: float = 0.25, facing_player: int = 1, text_color: Color = Color.WHITE) -> void:
 	var overlay := create_fullscreen_overlay(0.9, 400)
 	var label := make_overlay_label(prompt_text, 56)
+	label.add_theme_color_override("font_color", text_color)
 	label.position = Vector2.ZERO
 	label.size = overlay.size
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	if facing_player == 2:
-		label.pivot_offset = label.size * 0.5
-		label.rotation_degrees = 180.0
+	label.pivot_offset = label.size * 0.5
+	label.rotation_degrees = facing_rotation_degrees(facing_player)
 	overlay.add_child(label)
 
 	overlay.modulate.a = 0.0
@@ -288,8 +340,9 @@ func dim_for_hand_reveal(active_hand: PlayerHand, dimmed: bool) -> void:
 	discard_pile_sprite.modulate = target_modulate
 	discard_top_card.modulate = target_modulate
 
-	var inactive_hand: PlayerHand = player2_hand if active_hand == player1_hand else player1_hand
-	inactive_hand.modulate = target_modulate
+	for hand in get_all_hands():
+		if hand != active_hand:
+			hand.modulate = target_modulate
 	active_hand.z_index = 300 if dimmed else 0
 
 
@@ -299,6 +352,12 @@ func _process(_delta: float) -> void:
 	if turn_state == TurnState.SPECIAL_7:
 		update_seven_hover()
 		if hovered_special_card and hovered_special_card != selected_source_card:
+			hovered_special_card.update_shader_tilt(get_global_mouse_position())
+		return
+
+	if turn_state == TurnState.CHOOSING_PLAYER:
+		update_choose_hover()
+		if hovered_special_card:
 			hovered_special_card.update_shader_tilt(get_global_mouse_position())
 		return
 
@@ -337,6 +396,9 @@ func _input(event: InputEvent) -> void:
 		TurnState.SPECIAL_7:
 			if mouse_event.pressed:
 				await handle_seven_click()
+		TurnState.CHOOSING_PLAYER:
+			if mouse_event.pressed:
+				handle_choose_click()
 		_:
 			if mouse_event.pressed:
 				var card := check_card_click()
@@ -394,7 +456,6 @@ func on_board_card_hovered_off(card: BoardCard) -> void:
 
 func highlight_card(card: BoardCard, is_hovered: bool) -> void:
 	card.tween_hover_scale(HOVERED_CARD_SCALE if is_hovered else NORMAL_CARD_SCALE)
-	card.z_index = 2 if is_hovered else 1
 	CardShader.set_hover(card.sprite, 1.0 if is_hovered else 0.0)
 	if is_hovered:
 		CardShader.set_inset(card.sprite, 0.0)
@@ -457,7 +518,10 @@ func get_best_overlapped_player_card() -> PlayerCard:
 	var best_overlap_area := 0.0
 
 	for player_card in get_tree().get_nodes_in_group("player_cards"):
-		if player_card is PlayerCard and player_card.player_id == current_player:
+		# Hands that are not in play are hidden, not removed — an undealt card
+		# has no face, and swapping onto one puts a null texture on the discard.
+		if player_card is PlayerCard and player_card.player_id == current_player \
+				and player_card.is_visible_in_tree():
 			var overlap_area := get_overlap_area(dragged_card_rect, player_card.get_global_rect())
 			if overlap_area > best_overlap_area:
 				best_overlap_area = overlap_area
@@ -481,10 +545,38 @@ func start_turn() -> void:
 
 	turn_state = TurnState.DEALING
 	await show_turn_prompt()
+	apply_turn_focus()
 	await deal_center_draw_card()
 	await check_special_card_effect()
+	# Power effects (reveals, seven swap) restore full brightness when they
+	# finish, so the spotlight has to be re-applied.
+	apply_turn_focus()
 	set_discard_takeable(true)
 	turn_state = TurnState.WAITING_FOR_DROP
+
+
+## Spotlight the active player for the whole turn: a dark overlay covers the
+## board, and only their hand, the drawn card, and the discard top card sit
+## above it. The overlay persists between turns; only the raised hand changes.
+func apply_turn_focus() -> void:
+	if turn_focus_overlay == null:
+		turn_focus_overlay = create_fullscreen_overlay(0.5, TURN_FOCUS_OVERLAY_Z)
+
+	for hand in get_all_hands():
+		hand.z_index = FOCUSED_HAND_Z if hand == get_active_hand() else 0
+	center_draw_card.z_index = FOCUSED_DRAW_CARD_Z
+	discard_top_card.z_index = FOCUSED_DISCARD_Z
+
+
+func clear_turn_focus() -> void:
+	if turn_focus_overlay:
+		turn_focus_overlay.queue_free()
+		turn_focus_overlay = null
+
+	for hand in get_all_hands():
+		hand.z_index = 0
+	center_draw_card.z_index = 1
+	discard_top_card.z_index = 5
 
 
 ## While waiting for a drop, the discard pile's top card may be taken into the
@@ -504,23 +596,106 @@ func set_discard_takeable(takeable: bool) -> void:
 
 
 ## Queen: reveal the active player's own hand.
-## King: reveal the other player's hand.
-## Jack: jumble the other player's cards randomly.
+## King: reveal an opponent's hand.
+## Jack: jumble an opponent's cards randomly.
 ## Seven: swap one of the active player's cards with an opponent's card.
+## With three players, K/J/7 first let the active player pick the opponent.
 func check_special_card_effect() -> void:
 	match center_draw_card.rank:
 		"Q":
 			await run_hand_reveal(get_active_hand())
 
 		"K":
-			await run_hand_reveal(get_other_hand())
+			var reveal_hand := await get_power_target_hand("Choose a player whose\ncards you wish to see")
+			remove_special_overlay()
+			await run_hand_reveal(reveal_hand)
 
 		"J":
+			var jumble_hand := await get_power_target_hand("Choose a player whose\ncards you wish to jumble")
+			remove_special_overlay()
 			play_slide_sound()
-			await get_other_hand().jumble_cards()
+			await jumble_hand.jumble_cards()
 
 		"7":
-			await run_seven_swap_power()
+			var swap_hand := await get_power_target_hand("Choose a player who\nyou wish to swap with")
+			await run_seven_swap_power(swap_hand)
+
+
+## Which hand a K/J/7 power targets: always the other player in 2-player
+## games; in 3-player games the active player taps an opponent's cards.
+func get_power_target_hand(choose_prompt_text: String) -> PlayerHand:
+	if player_count == 2:
+		return get_next_hand()
+	var target_player: int = await choose_target_player(choose_prompt_text)
+	return get_hand(target_player)
+
+
+## Prompt the active player, then light up both opponent hands and wait for a
+## tap on one of them. Leaves the dim overlay up for the power that follows.
+func choose_target_player(choose_prompt_text: String) -> int:
+	chosen_target_player = 0
+	hovered_special_card = null
+
+	await show_fullscreen_prompt(choose_prompt_text, turn_prompt_time, 0.15, current_player, PROMPT_ACCENT_COLOR)
+
+	# Same layering as the seven power: board cards dim under the overlay,
+	# selectable hands are raised above it.
+	center_draw_card.z_index = 1
+	discard_top_card.z_index = 5
+	create_special_overlay()
+	for hand in get_all_hands():
+		var selectable := hand != get_active_hand()
+		set_hand_enabled(hand, selectable)
+		hand.z_index = RAISED_HAND_Z_INDEX if selectable else 0
+
+	turn_state = TurnState.CHOOSING_PLAYER
+	while chosen_target_player == 0:
+		await get_tree().process_frame
+	turn_state = TurnState.DEALING
+
+	if hovered_special_card:
+		hovered_special_card.set_drag_hovered(false)
+		hovered_special_card = null
+	for hand in get_all_hands():
+		set_hand_enabled(hand, true)
+		hand.z_index = 0
+
+	return chosen_target_player
+
+
+## The card under `point` in any opponent hand (CHOOSING_PLAYER state).
+func get_opponent_card_at(point: Vector2) -> PlayerCard:
+	var best_card: PlayerCard = null
+	var highest_z := -9999
+
+	for hand in get_all_hands():
+		if hand == get_active_hand():
+			continue
+		for card in hand.cards:
+			if card.get_global_rect().has_point(point) and card.z_index > highest_z:
+				highest_z = card.z_index
+				best_card = card
+
+	return best_card
+
+
+func update_choose_hover() -> void:
+	var new_hover := get_opponent_card_at(get_global_mouse_position())
+
+	if hovered_special_card == new_hover:
+		return
+
+	if hovered_special_card:
+		hovered_special_card.set_drag_hovered(false)
+	hovered_special_card = new_hover
+	if hovered_special_card:
+		hovered_special_card.set_drag_hovered(true)
+
+
+func handle_choose_click() -> void:
+	var clicked_card := get_opponent_card_at(get_global_mouse_position())
+	if clicked_card:
+		chosen_target_player = clicked_card.player_id
 
 
 func deal_center_draw_card() -> void:
@@ -532,23 +707,42 @@ func deal_center_draw_card() -> void:
 		card_data["texture"]
 	)
 	center_draw_card.visible = true
-	center_draw_card.z_index = 10
+	center_draw_card.z_index = FOCUSED_DRAW_CARD_Z
 	center_draw_card.can_drag = false
 	center_draw_card.global_position = deck_sprite.global_position
+	center_draw_card.rotation_degrees = deck_sprite.rotation_degrees
 	# The card's child sprite is pre-scaled, so divide that out to spawn at
 	# exactly the deck pile's on-screen size.
 	center_draw_card.scale = deck_sprite.scale / center_draw_card.sprite.scale.x
 
+	# In 3-player mode the drawn card turns to face whoever's turn it is.
+	var target_rotation := facing_rotation_degrees(current_player) if player_count == 3 else 0.0
+
 	play_slide_sound()
 	var move_tween := create_tween().set_parallel(true)
-	move_tween.tween_property(center_draw_card, "global_position", center_draw_position, initial_deal_fly_time) \
+	move_tween.tween_property(center_draw_card, "global_position", get_draw_card_rest_position(), initial_deal_fly_time) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	move_tween.tween_property(center_draw_card, "scale", NORMAL_CARD_SCALE, initial_deal_fly_time) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	move_tween.tween_property(center_draw_card, "rotation_degrees", target_rotation, initial_deal_fly_time) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	await move_tween.finished
 
 	await center_draw_card.flip_to_front()
-	center_draw_card.z_index = 1
+
+
+## Where the drawn card rests this turn. In 3-player mode Players 1 and 2 get
+## it stepped to the side away from the discard pile; Player 3's sideways card
+## parks right on top of the deck pile (which isn't interactive), nudged up a
+## touch so its edge cannot cover the tappable discard pile below.
+func get_draw_card_rest_position() -> Vector2:
+	var rest := center_draw_position
+	if player_count == 3:
+		if current_player == 3:
+			rest = deck_sprite.global_position + Vector2(0.0, -30.0)
+		else:
+			rest.x += DRAW_CARD_TURN_OFFSET
+	return rest
 
 
 func discard_center_draw_card() -> void:
@@ -556,15 +750,17 @@ func discard_center_draw_card() -> void:
 	center_draw_card.can_drag = false
 	set_discard_takeable(false)
 
-	var move_tween := create_tween()
+	var move_tween := create_tween().set_parallel(true)
 	move_tween.tween_property(center_draw_card, "global_position", discard_pile_position, SNAP_TIME) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	move_tween.tween_property(center_draw_card, "rotation_degrees", discard_pile_sprite.rotation_degrees, SNAP_TIME) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	await move_tween.finished
 
 	place_card_on_discard(center_draw_card)
 	play_place_sound()
 	center_draw_card.visible = false
-	current_player = 3 - current_player  # Toggle between players 1 and 2.
+	advance_to_next_player()
 	await start_turn()
 
 
@@ -591,7 +787,7 @@ func swap_draw_card_with_player_card(player_card: PlayerCard) -> void:
 	center_draw_card.visible = false
 
 	await animate_card_to_discard(old_card_data, player_card.global_position)
-	current_player = 3 - current_player  # Toggle between players 1 and 2.
+	advance_to_next_player()
 	await start_turn()
 
 
@@ -601,7 +797,7 @@ func return_center_draw_card() -> void:
 
 	play_slide_sound()
 	var move_tween := create_tween()
-	move_tween.tween_property(center_draw_card, "global_position", center_draw_position, SNAP_TIME) \
+	move_tween.tween_property(center_draw_card, "global_position", get_draw_card_rest_position(), SNAP_TIME) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	await move_tween.finished
 
@@ -634,8 +830,10 @@ func take_discard_card(player_card: PlayerCard) -> void:
 	discard_top_card.visible = false
 
 	play_slide_sound()
-	var center_tween := create_tween()
+	var center_tween := create_tween().set_parallel(true)
 	center_tween.tween_property(center_draw_card, "global_position", discard_pile_position, DISCARD_FLY_TIME) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	center_tween.tween_property(center_draw_card, "rotation_degrees", discard_pile_sprite.rotation_degrees, DISCARD_FLY_TIME) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	await center_tween.finished
 	place_card_on_discard(center_draw_card)
@@ -644,7 +842,7 @@ func take_discard_card(player_card: PlayerCard) -> void:
 
 	await animate_card_to_discard(old_hand_data, player_card.global_position)
 
-	current_player = 3 - current_player  # Toggle between players 1 and 2.
+	advance_to_next_player()
 	await start_turn()
 
 
@@ -673,7 +871,7 @@ func animate_card_to_discard(card_data: Dictionary, start_position: Vector2) -> 
 	)
 	flying_card.global_position = start_position
 	flying_card.scale = NORMAL_CARD_SCALE
-	flying_card.z_index = 6
+	flying_card.z_index = FLYING_CARD_Z
 
 	var move_tween := create_tween()
 	move_tween.tween_property(flying_card, "global_position", discard_pile_position, DISCARD_FLY_TIME) \
@@ -731,17 +929,23 @@ func set_hand_enabled(hand: PlayerHand, enabled: bool) -> void:
 		card.modulate = Color.WHITE if enabled else Color(0.35, 0.35, 0.35)
 
 
-func run_seven_swap_power() -> void:
+func run_seven_swap_power(target_hand: PlayerHand) -> void:
 	turn_state = TurnState.SPECIAL_7
 
+	seven_target_hand = target_hand
 	selected_source_card = null
 	hovered_special_card = null
 	seven_selecting_opponent = false
 	seven_power_done = false
 
+	# Drop the board cards below the seven overlay so the drawn 7 dims and
+	# cannot cover the skip button; the turn spotlight restores them after.
+	center_draw_card.z_index = 1
+	discard_top_card.z_index = 5
+
 	create_special_overlay()
 	show_seven_skip_button()
-	set_seven_phase_hands(get_active_hand(), get_other_hand())
+	set_seven_phase_hands(true)
 
 	# Block until the swap animation finishes or the player skips, so the
 	# turn cannot resume while cards are still flying.
@@ -750,10 +954,9 @@ func run_seven_swap_power() -> void:
 
 	remove_seven_skip_button()
 	remove_special_overlay()
-	set_hand_enabled(player1_hand, true)
-	set_hand_enabled(player2_hand, true)
-	player1_hand.z_index = 0
-	player2_hand.z_index = 0
+	for hand in get_all_hands():
+		set_hand_enabled(hand, true)
+		hand.z_index = 0
 
 
 func show_seven_skip_button() -> void:
@@ -780,9 +983,7 @@ func show_seven_skip_button() -> void:
 	seven_skip_button.size = Vector2(580.0, 130.0)
 	seven_skip_button.position = (screen_size - seven_skip_button.size) * 0.5
 	seven_skip_button.pivot_offset = seven_skip_button.size * 0.5
-	# Face the active player: Player 2 sits at the top of the screen.
-	if current_player == 2:
-		seven_skip_button.rotation_degrees = 180.0
+	seven_skip_button.rotation_degrees = facing_rotation_degrees(current_player)
 	seven_skip_button.pressed.connect(on_seven_skip_pressed)
 	add_child(seven_skip_button)
 
@@ -815,17 +1016,20 @@ func on_seven_skip_pressed() -> void:
 	seven_power_done = true
 
 
-## Light up and raise the hand the player may pick from; dim and lower the other.
-func set_seven_phase_hands(selectable: PlayerHand, locked: PlayerHand) -> void:
-	set_hand_enabled(selectable, true)
-	set_hand_enabled(locked, false)
-	selectable.z_index = RAISED_HAND_Z_INDEX
-	locked.z_index = 0
+## Light up and raise the selectable hand, dim and lower the rest.
+## Phase 1 (selecting_own = true): the active hand. Phase 2: the chosen
+## target hand — any third player stays dark and excluded.
+func set_seven_phase_hands(selecting_own: bool) -> void:
+	var selectable_hand := get_active_hand() if selecting_own else seven_target_hand
+	for hand in get_all_hands():
+		var selectable := hand == selectable_hand
+		set_hand_enabled(hand, selectable)
+		hand.z_index = RAISED_HAND_Z_INDEX if selectable else 0
 
 
-## The card under `point` in whichever hand is currently selectable.
+## The card under `point` in the currently selectable hand.
 func get_seven_card_at(point: Vector2) -> PlayerCard:
-	var hand := get_other_hand() if seven_selecting_opponent else get_active_hand()
+	var hand := seven_target_hand if seven_selecting_opponent else get_active_hand()
 	var best_card: PlayerCard = null
 	var highest_z := -9999
 
@@ -865,7 +1069,7 @@ func handle_seven_click() -> void:
 		seven_selecting_opponent = true
 		hovered_special_card = null
 
-		set_seven_phase_hands(get_other_hand(), get_active_hand())
+		set_seven_phase_hands(false)
 		# Keep the chosen card lit and above the dim overlay while picking a target.
 		selected_source_card.modulate = Color.WHITE
 		selected_source_card.z_index = RAISED_HAND_Z_INDEX
@@ -912,28 +1116,55 @@ func animate_swap_player_cards(first: PlayerCard, second: PlayerCard) -> void:
 	player2_hand.arrange_cards()
 
 
+func get_all_hands() -> Array[PlayerHand]:
+	var hands: Array[PlayerHand] = [player1_hand, player2_hand]
+	if player_count == 3:
+		hands.append(player3_hand)
+	return hands
+
+
+func get_hand(player: int) -> PlayerHand:
+	match player:
+		1: return player1_hand
+		2: return player2_hand
+		_: return player3_hand
+
+
 func get_active_hand() -> PlayerHand:
-	return player1_hand if current_player == 1 else player2_hand
+	return get_hand(current_player)
 
 
-func get_other_hand() -> PlayerHand:
-	return player2_hand if current_player == 1 else player1_hand
+## The hand of the player after the active one in turn order.
+func get_next_hand() -> PlayerHand:
+	return get_hand(current_player % player_count + 1)
+
+
+## Turn order cycles 1 → 2 → (3) → 1.
+func advance_to_next_player() -> void:
+	current_player = current_player % player_count + 1
+
+
+## How much a screen-facing element must rotate to be upright for a player:
+## Player 1 sits at the bottom, Player 2 at the top, Player 3 at the right edge.
+func facing_rotation_degrees(player: int) -> float:
+	match player:
+		2: return 180.0
+		3: return -90.0
+		_: return 0.0
 
 
 func end_game() -> void:
 	turn_state = TurnState.GAME_OVER
+	clear_turn_focus()
 	center_draw_card.visible = false
 	await reveal_all_cards()
 	show_game_over_overlay()
 
 
 func reveal_all_cards() -> void:
-	var all_cards: Array[PlayerCard] = []
-	all_cards.append_array(player1_hand.cards)
-	all_cards.append_array(player2_hand.cards)
-
-	for card in all_cards:
-		await card.animate_flip(true, player_card_flip_time)
+	for hand in get_all_hands():
+		for card in hand.cards:
+			await card.animate_flip(true, player_card_flip_time)
 
 
 ## Cabo scoring: A=1, number cards face value, J=11, Q=12, K=13.
@@ -954,15 +1185,21 @@ func get_hand_score(hand: PlayerHand) -> int:
 
 
 func show_game_over_overlay() -> void:
-	var player1_score := get_hand_score(player1_hand)
-	var player2_score := get_hand_score(player2_hand)
+	var hands := get_all_hands()
+	var scores: Array[int] = []
+	for hand in hands:
+		scores.append(get_hand_score(hand))
 
-	# Lowest total wins.
-	var title := "It's a tie!"
-	if player1_score < player2_score:
-		title = "Player 1 wins!"
-	elif player2_score < player1_score:
-		title = "Player 2 wins!"
+	# Lowest total wins; multiple players on the lowest score is a tie.
+	var best_score: int = scores.min()
+	var winner_player := 0
+	var winner_count := 0
+	for i in range(scores.size()):
+		if scores[i] == best_score:
+			winner_count += 1
+			winner_player = i + 1
+
+	var title := "It's a tie!" if winner_count > 1 else "Player %d wins!" % winner_player
 
 	game_over_overlay = create_fullscreen_overlay(0.9, 400)
 
@@ -983,8 +1220,8 @@ func show_game_over_overlay() -> void:
 	layout.add_theme_constant_override("separation", 24)
 	game_over_overlay.add_child(layout)
 
-	layout.add_child(make_overlay_label("Player 1: %d points" % player1_score, 40))
-	layout.add_child(make_overlay_label("Player 2: %d points" % player2_score, 40))
+	for i in range(scores.size()):
+		layout.add_child(make_overlay_label("Player %d: %d points" % [i + 1, scores[i]], 40))
 	layout.add_child(make_overlay_label("Tap anywhere for the main menu", 30))
 
 

@@ -15,15 +15,19 @@ class_name PlayerHand
 	set(v): top_offset = v; _refresh()
 @export var max_rotation_degrees: float = 10.0:
 	set(v): max_rotation_degrees = v; _refresh()
-@export var card_scale: Vector2 = Vector2(1.18, 1.18):
+@export var card_scale: Vector2 = Vector2(1.25, 1.25):
 	set(v): card_scale = v; _refresh()
 
 # ── Identity ──────────────────────────────────────────────────────────────────
-## Which player owns this hand (1 or 2). Stamped onto each card on deal.
+## Which player owns this hand. Stamped onto each card on deal.
 @export var player_id: int = 1
 ## When true, cards are anchored to the top of the screen (Player 2).
 @export var position_at_top: bool = false:
 	set(v): position_at_top = v; _refresh()
+## When true, the layout spans the screen's vertical edge instead (the local
+## span uses swapped viewport dimensions). The side player in 3-player mode.
+@export var sideways: bool = false:
+	set(v): sideways = v; _refresh()
 ## If true, deals a random hand in _ready() — handy for editor testing.
 @export var auto_deal: bool = false
 
@@ -31,6 +35,11 @@ var cards: Array[PlayerCard] = []
 
 func _ready() -> void:
 	cards = _collect_cards()
+	# Stamp ownership up front. Dealing also sets this, but a hand that is
+	# never dealt (Player 3 in a 2-player game) would otherwise keep the
+	# default id of 1 and answer to Player 1's drop targeting.
+	for card in cards:
+		card.player_id = player_id
 	if auto_deal:
 		deal_from_deck(CardDeck.create_shuffled_deck())
 	arrange_cards()
@@ -50,12 +59,18 @@ func deal_from_deck(deck: Array[Dictionary]) -> void:
 
 
 ## Move every slot to the deck so cards can fly in one at a time.
-func stack_cards_at_deck(deck_global_pos: Vector2) -> void:
+func stack_cards_at_deck(deck_global_pos: Vector2, deck_rotation_degrees: float = 0.0) -> void:
 	for card in cards:
 		card.visible = true
 		card.global_position = deck_global_pos
-		card.rotation_degrees = 0.0
+		card.rotation_degrees = _deck_local_rotation(deck_rotation_degrees)
 		card.z_index = 0
+
+
+## Local rotation that visually matches the deck pile's orientation (card
+## backs are 180°-symmetric, so the nearest half-turn keeps flights short).
+func _deck_local_rotation(deck_rotation_degrees: float) -> float:
+	return wrapf(deck_rotation_degrees - global_rotation_degrees, -90.0, 90.0)
 
 
 ## Deal one card from deck with a fly-in animation from the deck sprite.
@@ -64,14 +79,15 @@ func animate_deal_card(
 	card_data: Dictionary,
 	deck_global_pos: Vector2,
 	fly_time: float,
-	deck_scale: Vector2 = Vector2.ONE
+	deck_scale: Vector2 = Vector2.ONE,
+	deck_rotation_degrees: float = 0.0
 ) -> void:
 	var card: PlayerCard = cards[card_index]
 	card.player_id = player_id
 	card.setup_card(card_data["rank"], card_data["suit"], card_data["texture"])
 	card.visible = true
 	card.global_position = deck_global_pos
-	card.rotation_degrees = 0.0
+	card.rotation_degrees = _deck_local_rotation(deck_rotation_degrees)
 	# The card's child sprite is pre-scaled, so divide that out to spawn at
 	# exactly the deck pile's on-screen size.
 	card.scale = deck_scale / card.sprite.scale.x
@@ -129,12 +145,15 @@ func _collect_cards() -> Array[PlayerCard]:
 
 ## Returns the game resolution in both editor and runtime contexts.
 func _screen_size() -> Vector2:
+	var size: Vector2
 	if Engine.is_editor_hint():
-		return Vector2(
+		size = Vector2(
 			ProjectSettings.get_setting("display/window/size/viewport_width"),
 			ProjectSettings.get_setting("display/window/size/viewport_height")
 		)
-	return get_viewport_rect().size
+	else:
+		size = get_viewport_rect().size
+	return Vector2(size.y, size.x) if sideways else size
 
 
 ## Called by property setters — re-arranges cards once _ready() has run.
