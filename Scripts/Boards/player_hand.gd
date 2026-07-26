@@ -19,6 +19,11 @@ class_name PlayerHand
 	set(v): max_rotation_degrees = v; _refresh()
 @export var card_scale: Vector2 = Vector2(1.4, 1.4):
 	set(v): card_scale = v; _refresh()
+## Slides the whole fan along the edge it hugs, in this hand's own frame, so a
+## positive shift always moves toward its player's right. Four-player tables need
+## it: two hands share the right edge, and the other two step aside for them.
+@export var edge_shift: float = 0.0:
+	set(v): edge_shift = v; _refresh()
 
 # ── Identity ──────────────────────────────────────────────────────────────────
 ## Which player owns this hand. Stamped onto each card on deal.
@@ -117,14 +122,20 @@ func animate_deal_card(
 	card.set_resting_z_index(card_index)
 
 
+## Where the fan is centered in this hand's own space. A caller that rotates the
+## whole hand needs this to know what its node rotation is pivoting away from.
+func fan_center() -> Vector2:
+	var screen: Vector2 = _screen_size()
+	var anchor_y: float = top_offset if position_at_top else screen.y - bottom_offset
+	return Vector2(screen.x * 0.5 + edge_shift, anchor_y)
+
+
 ## Position all cards in a fan arc anchored to the player's screen edge.
 func arrange_cards() -> void:
 	if cards.is_empty():
 		return
 
-	var screen: Vector2 = _screen_size()
-	var anchor_y: float = top_offset if position_at_top else screen.y - bottom_offset
-	var center := Vector2(screen.x * 0.5, anchor_y)
+	var center: Vector2 = fan_center()
 	var mid: float = (cards.size() - 1) * 0.5
 
 	for i in range(cards.size()):

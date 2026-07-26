@@ -37,6 +37,13 @@ rotation = -1.5707964
 player_id = 3
 sideways = true
 
+[node name="Player4Hand" parent="." unique_id=1704065880 instance=ExtResource("2_8ode1")]
+visible = false
+position = Vector2(0, 1920)
+rotation = -1.5707964
+player_id = 4
+sideways = true
+
 [node name="DeckSprite" type="Sprite2D" parent="." unique_id=815075980]
 position = Vector2(165, 960)
 scale = Vector2(2.1, 2.1)

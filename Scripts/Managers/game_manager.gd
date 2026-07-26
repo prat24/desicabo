@@ -22,18 +22,39 @@ const SWAP_FLY_TIME = 0.4
 const BOARD_SLOT_OFFSET_X = 375.0
 
 # ── Hand sizing — a fan of three cards has to fit the screen's short edge, so
-# the cards shrink a step when a third player joins the same table. ───────────
+# the cards shrink a step for every player who joins the same table. Spacing
+# always steps down with the card size, keeping one fan shape at every count:
+# same arc, same overlap, never a row of spread-out cards. ────────────────────
 const HAND_CARD_SCALE_2P = Vector2(1.4, 1.4)
 const HAND_CARD_SCALE_3P = Vector2(1.25, 1.25)
+const HAND_CARD_SCALE_4P = Vector2(1.03, 1.03)
 const HAND_SPACING_2P = 290.0
-## Steps down with the card size, so a three-player fan is the two-player fan at
-## a smaller scale — same arc, same overlap, not a row of spread-out cards.
 const HAND_SPACING_3P = 259.0
+const HAND_SPACING_4P = 213.0
 const HAND_ARC_HEIGHT = 55.0
 const HAND_MAX_ROTATION_DEGREES = 10.0
 ## How far a hand's center sits from the screen edge it hugs.
 const HAND_EDGE_OFFSET_2P = 240.0
 const HAND_EDGE_OFFSET_3P = 235.0
+## Four hands is tight, so the bottom and top ones tuck further past their edge.
+const HAND_EDGE_OFFSET_4P = 150.0
+## The two hands sharing the right edge hug it tightly: together with the side
+## split below, that keeps their fans clear of the bottom and top hands entirely,
+## so each one is free to use its own half of the screen's full height.
+const HAND_RIGHT_EDGE_OFFSET_4P = 160.0
+## Players 1 and 2 sit at the left corners in a four-player game, so their whole
+## hands tilt — which also swings each fan's far end clear of the right-side hand
+## nearest it (Player 4 below, Player 3 above).
+const HAND_TILT_4P = 12.0
+## Where both tilted fans are centered horizontally (the viewport is always 1080
+## wide; only its height varies by device). Far enough in from the corner that the
+## corner-most card of each fan clears the side edge, and no further: the fan's
+## other end has to stop short of the two hands sharing the right edge.
+const HAND_CORNER_CENTER_X_4P = 375.0
+## How far from the screen's middle each right-side hand sits, as a fraction of
+## the height. A quarter would center each in its own half; slightly less than
+## that closes the gap between the two of them.
+const HAND_RIGHT_SPLIT_4P = 0.21
 ## Special-power dim overlay z-index; the selectable hand is raised above it.
 const OVERLAY_Z_INDEX = 150
 const RAISED_HAND_Z_INDEX = 200
@@ -118,10 +139,11 @@ var sfx_slide: AudioStreamPlayer
 @onready var player1_hand: PlayerHand = $PlayerHand
 @onready var player2_hand: PlayerHand = $Player2Hand
 @onready var player3_hand: PlayerHand = $Player3Hand
+@onready var player4_hand: PlayerHand = $Player4Hand
 
 
 func _ready() -> void:
-	player_count = clampi(GameConfig.player_count, 2, 3)
+	player_count = clampi(GameConfig.player_count, 2, 4)
 	screen_size = get_viewport_rect().size
 	layout_board_for_screen()
 	center_draw_position = center_draw_card.global_position
@@ -148,17 +170,19 @@ func _ready() -> void:
 ## Anchor the board to the real screen size: the scene is authored for
 ## 1080x1920, but stretch aspect "expand" makes the viewport taller on modern
 ## phones. Two players: middle row centered, Player 2 pinned to the top.
-## Three players: the board becomes a sideways column on the left, and
-## Player 3's hand fans along the right edge (viewed from the right side).
+## Three or more: the board becomes a sideways column on the left, and the
+## right edge belongs to Player 3 (and Player 4, who sits beside them).
 func layout_board_for_screen() -> void:
 	var center: Vector2 = screen_size * 0.5
 	player2_hand.position = screen_size
-	player3_hand.visible = player_count == 3
+	player3_hand.visible = player_count >= 3
+	player4_hand.visible = player_count >= 4
 	apply_hand_sizing()
 
-	if player_count == 3:
-		player3_hand.position = Vector2(0.0, screen_size.y)
-		player3_hand.rotation_degrees = -90.0
+	if player_count >= 3:
+		for hand: PlayerHand in [player3_hand, player4_hand]:
+			hand.position = Vector2(0.0, screen_size.y)
+			hand.rotation_degrees = -90.0
 
 		# Deck and discard sit close together in a sideways column on the
 		# left; the drawn card goes to the screen center, oriented per turn.
@@ -191,18 +215,72 @@ func board_card_rest_scale(card: BoardCard) -> Vector2:
 	return hand_card_scale() if card == center_draw_card else NORMAL_CARD_SCALE
 
 
-## Size every hand for the current player count. Each setter re-arranges the
-## fan, so the cards pick the new size up without any extra call.
+## Size and place every hand for the current player count. Each setter
+## re-arranges the fan, so the cards pick the new layout up with no extra call.
 func apply_hand_sizing() -> void:
-	var is_two_player: bool = player_count == 2
-	var edge_offset: float = HAND_EDGE_OFFSET_2P if is_two_player else HAND_EDGE_OFFSET_3P
-	for hand: PlayerHand in [player1_hand, player2_hand, player3_hand]:
-		hand.card_scale = HAND_CARD_SCALE_2P if is_two_player else HAND_CARD_SCALE_3P
-		hand.card_spacing = HAND_SPACING_2P if is_two_player else HAND_SPACING_3P
+	var hand_scale := HAND_CARD_SCALE_2P
+	var spacing := HAND_SPACING_2P
+	var edge_offset := HAND_EDGE_OFFSET_2P
+	match player_count:
+		3:
+			hand_scale = HAND_CARD_SCALE_3P
+			spacing = HAND_SPACING_3P
+			edge_offset = HAND_EDGE_OFFSET_3P
+		4:
+			hand_scale = HAND_CARD_SCALE_4P
+			spacing = HAND_SPACING_4P
+			edge_offset = HAND_EDGE_OFFSET_4P
+
+	for hand: PlayerHand in [player1_hand, player2_hand, player3_hand, player4_hand]:
+		hand.card_scale = hand_scale
+		hand.card_spacing = spacing
 		hand.arc_height = HAND_ARC_HEIGHT
 		hand.max_rotation_degrees = HAND_MAX_ROTATION_DEGREES
 		hand.bottom_offset = edge_offset
 		hand.top_offset = edge_offset
+		hand.edge_shift = 0.0
+
+	if player_count == 4:
+		place_four_player_hands()
+
+
+## Four hands, four corners of the screen. Players 3 and 4 share the right edge,
+## so the other two clear out of the right entirely: Player 1 tilts into the
+## bottom-left corner and Player 2 into the top-left one, each fan's far end
+## swinging away from the right-side hand beside it. With nothing else reaching
+## that far right, the two right-side hands have the screen's whole height to
+## split between them — which is what keeps them apart on a short viewport as
+## well as a tall one.
+func place_four_player_hands() -> void:
+	# The two corner fans are mirror images across the screen's middle: same
+	# distance in from the left edge and from their own edge, opposite tilts.
+	# Player 2 hangs upside down, so the mirrored tilt is a half-turn less than
+	# Player 1's rather than more. Both fans are placed outright, which is why
+	# neither needs the edge shift apply_hand_sizing() just cleared.
+	place_hand_at(
+		player1_hand,
+		Vector2(HAND_CORNER_CENTER_X_4P, screen_size.y - HAND_EDGE_OFFSET_4P),
+		HAND_TILT_4P
+	)
+	place_hand_at(
+		player2_hand,
+		Vector2(HAND_CORNER_CENTER_X_4P, HAND_EDGE_OFFSET_4P),
+		180.0 - HAND_TILT_4P
+	)
+
+	for hand: PlayerHand in [player3_hand, player4_hand]:
+		hand.bottom_offset = HAND_RIGHT_EDGE_OFFSET_4P
+	player3_hand.edge_shift = screen_size.y * HAND_RIGHT_SPLIT_4P
+	player4_hand.edge_shift = -screen_size.y * HAND_RIGHT_SPLIT_4P
+
+
+## Put `hand`'s fan center on `center_global`, tilted. The node pivots about its
+## own origin — a screen corner, far from the fan — so the position has to absorb
+## the offset that rotating introduces. Card positions are local, so they follow
+## along with no re-arrange.
+func place_hand_at(hand: PlayerHand, center_global: Vector2, tilt_degrees: float) -> void:
+	hand.rotation_degrees = tilt_degrees
+	hand.position = center_global - hand.transform.basis_xform(hand.fan_center())
 
 
 ## Smooth arrival from the title screen: it fades to black before the scene
@@ -288,11 +366,12 @@ func show_reveal_prompt(player_number: int) -> void:
 			other_player
 		)
 	else:
-		# Shown once per other player in their orientation, so each showing
-		# runs at half time to keep the total the same.
-		var prompt_text := "Time for Player %d to see their cards!\nEveryone else look away!" % player_number
-		for player in get_other_players(player_number):
-			await show_fullscreen_prompt(prompt_text, reveal_prompt_time * 0.5, 0.25, player)
+		await show_look_away_prompt(
+			"Time for Player %d to see their cards!\nEveryone else look away!" % player_number,
+			reveal_prompt_time,
+			0.25,
+			get_other_players(player_number)
+		)
 
 
 func show_turn_prompt() -> void:
@@ -306,11 +385,35 @@ func show_turn_prompt() -> void:
 			other_player
 		)
 	else:
-		# Shown once per other player in their orientation, so each showing
-		# runs at half time to keep the total the same.
-		var prompt_text := "Player %d's turn now.\nEveryone else, look away!" % current_player
-		for player in get_other_players(current_player):
-			await show_fullscreen_prompt(prompt_text, turn_prompt_time * 0.5, 0.15, player)
+		await show_look_away_prompt(
+			"Player %d's turn now.\nEveryone else, look away!" % current_player,
+			turn_prompt_time,
+			0.15,
+			get_other_players(current_player)
+		)
+
+
+## Warn everyone in `audience` to look away, once per orientation rather than
+## once per player: Players 3 and 4 read from the same edge, so one sideways
+## showing addresses both. The total time is fixed and split per player, so a
+## showing that covers two of them simply holds twice as long.
+func show_look_away_prompt(prompt_text: String, total_time: float, fade_time: float, audience: Array[int]) -> void:
+	if audience.is_empty():
+		return
+
+	var time_per_player: float = total_time / float(audience.size())
+	var shown_rotations: Array[float] = []
+	for player in audience:
+		var facing: float = facing_rotation_degrees(player)
+		if shown_rotations.has(facing):
+			continue
+		shown_rotations.append(facing)
+
+		var sharing_this_side := 0
+		for other in audience:
+			if is_equal_approx(facing_rotation_degrees(other), facing):
+				sharing_this_side += 1
+		await show_fullscreen_prompt(prompt_text, time_per_player * sharing_this_side, fade_time, player)
 
 
 ## Every player number except `player`, in ascending order.
@@ -784,8 +887,13 @@ func deal_center_draw_card() -> void:
 	# exactly the deck pile's on-screen size.
 	center_draw_card.scale = deck_sprite.scale / center_draw_card.sprite.scale.x
 
-	# In 3-player mode the drawn card turns to face whoever's turn it is.
-	var target_rotation := facing_rotation_degrees(current_player) if player_count == 3 else 0.0
+	# In 3-player mode the drawn card turns to face whoever's turn it is. Four
+	# players keep the two upright hands' card upright — it lands beside the
+	# board, where they both read it fine — but Players 3 and 4 draw to the
+	# sideways column on their own edge, so their card turns with them.
+	var target_rotation := 0.0
+	if player_count == 3 or current_player >= 3:
+		target_rotation = facing_rotation_degrees(current_player)
 
 	play_slide_sound()
 	var move_tween := create_tween().set_parallel(true)
@@ -802,14 +910,15 @@ func deal_center_draw_card() -> void:
 	await center_draw_card.flip_to_front()
 
 
-## Where the drawn card rests this turn. In 3-player mode Players 1 and 2 get
-## it stepped to the side away from the discard pile; Player 3's sideways card
-## parks right on top of the deck pile (which isn't interactive), nudged up a
-## touch so its edge cannot cover the tappable discard pile below.
+## Where the drawn card rests this turn. Once the board is a sideways column,
+## Players 1 and 2 get the card stepped to the side away from the discard pile,
+## while the right-side players' sideways card parks right on top of the deck
+## pile (which isn't interactive), nudged up a touch so its edge cannot cover
+## the tappable discard pile below.
 func get_draw_card_rest_position() -> Vector2:
 	var rest := center_draw_position
-	if player_count == 3:
-		if current_player == 3:
+	if player_count >= 3:
+		if current_player >= 3:
 			rest = deck_sprite.global_position + Vector2(0.0, -30.0)
 		else:
 			rest.x += DRAW_CARD_TURN_OFFSET
@@ -1224,8 +1333,10 @@ func animate_swap_player_cards(first: PlayerCard, second: PlayerCard) -> void:
 
 func get_all_hands() -> Array[PlayerHand]:
 	var hands: Array[PlayerHand] = [player1_hand, player2_hand]
-	if player_count == 3:
+	if player_count >= 3:
 		hands.append(player3_hand)
+	if player_count >= 4:
+		hands.append(player4_hand)
 	return hands
 
 
@@ -1233,7 +1344,8 @@ func get_hand(player: int) -> PlayerHand:
 	match player:
 		1: return player1_hand
 		2: return player2_hand
-		_: return player3_hand
+		3: return player3_hand
+		_: return player4_hand
 
 
 func get_active_hand() -> PlayerHand:
@@ -1251,11 +1363,12 @@ func advance_to_next_player() -> void:
 
 
 ## How much a screen-facing element must rotate to be upright for a player:
-## Player 1 sits at the bottom, Player 2 at the top, Player 3 at the right edge.
+## Player 1 sits at the bottom, Player 2 at the top, and Players 3 and 4 both
+## look in from the right edge — so they read the same rotation.
 func facing_rotation_degrees(player: int) -> float:
 	match player:
 		2: return 180.0
-		3: return -90.0
+		3, 4: return -90.0
 		_: return 0.0
 
 

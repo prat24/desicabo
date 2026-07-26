@@ -3,8 +3,8 @@
 ## reveal it. The title then swells, snaps back with a boom, turns white, and
 ## blasts the pile away. Finally a fanned hand of card buttons rises from the
 ## bottom: Local / Online / Settings. Picking Local slides that hand away and
-## deals a second hand asking how many players (2 / 3 / 4). Online and the
-## 4-player card are not live yet.
+## deals a second hand asking how many players (2 / 3 / 4). Online is not live
+## yet.
 extends Control
 
 const GAME_SCENE_PATH := "res://Scenes/Managers/game_manager.tscn"
@@ -55,7 +55,7 @@ const MAIN_HAND := [
 const PLAYER_COUNT_HAND := [
 	{"id": "2", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts2.png"), "enabled": true},
 	{"id": "3", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts3.png"), "enabled": true},
-	{"id": "4", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts4.png"), "enabled": false},
+	{"id": "4", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts4.png"), "enabled": true},
 ]
 ## Matches a two-player game hand, so the menu cards and the cards the player
 ## picks up a moment later are the same size.
@@ -296,6 +296,8 @@ func handle_card_pressed(card: PlayerCard) -> void:
 			start_game_with_card(card, 2)
 		"3":
 			start_game_with_card(card, 3)
+		"4":
+			start_game_with_card(card, 4)
 
 
 func open_settings(card: PlayerCard) -> void:
