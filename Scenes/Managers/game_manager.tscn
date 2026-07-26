@@ -24,25 +24,22 @@ grow_vertical = 2
 mouse_filter = 2
 
 [node name="PlayerHand" parent="." unique_id=304696810 instance=ExtResource("2_8ode1")]
-max_rotation_degrees = 16.0
 
 [node name="Player2Hand" parent="." unique_id=962528982 instance=ExtResource("2_8ode1")]
 position = Vector2(1080, 1920)
 rotation = 3.1415927
-max_rotation_degrees = 16.0
 player_id = 2
 
 [node name="Player3Hand" parent="." unique_id=1704065879 instance=ExtResource("2_8ode1")]
 visible = false
 position = Vector2(0, 1920)
 rotation = -1.5707964
-max_rotation_degrees = 16.0
 player_id = 3
 sideways = true
 
 [node name="DeckSprite" type="Sprite2D" parent="." unique_id=815075980]
-position = Vector2(150, 960)
-scale = Vector2(2.5, 2.5)
+position = Vector2(165, 960)
+scale = Vector2(2.1, 2.1)
 texture = ExtResource("4_j1mdm")
 
 [node name="CenterDrawCard" parent="." unique_id=1108670356 instance=ExtResource("2_il670")]
@@ -50,14 +47,14 @@ z_index = 1
 position = Vector2(540, 960)
 
 [node name="DiscardPileSprite" type="Sprite2D" parent="." unique_id=1257155411]
-position = Vector2(930, 960)
-scale = Vector2(2.5, 2.5)
+position = Vector2(915, 960)
+scale = Vector2(2.1, 2.1)
 texture = ExtResource("6_xbfc7")
 
 [node name="DiscardTopCard" parent="." unique_id=88107710 instance=ExtResource("2_il670")]
 visible = false
 z_index = 2
-position = Vector2(930, 960)
+position = Vector2(915, 960)
 
 [node name="FlyingCard" parent="." unique_id=437379845 instance=ExtResource("2_il670")]
 visible = false

@@ -30,9 +30,11 @@ const TITLE_CARDS_PER_ROW := 5
 const TITLE_CARD_ROW_SPACING := 260.0
 const TITLE_ROW_STAGGER := 45.0
 const TITLE_CARD_SPACING := 185.0
-const TITLE_CARD_SCALE := 2.3
+## These are bare sprites, so their scale counts the card scene's own 2 in:
+## 2.6 here is the 1.3 of a card, a step under the menu hand's 1.4.
+const TITLE_CARD_SCALE := 2.6
 ## Cards start bigger, as if flying in toward the table from the viewer.
-const TITLE_CARD_START_SCALE := 3.0
+const TITLE_CARD_START_SCALE := 3.4
 const THROW_TIME := 0.5
 const THROW_STAGGER := 0.11
 const OFFSCREEN_MARGIN := 320.0
@@ -55,14 +57,18 @@ const PLAYER_COUNT_HAND := [
 	{"id": "3", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts3.png"), "enabled": true},
 	{"id": "4", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts4.png"), "enabled": false},
 ]
-const HAND_CARD_SCALE := 1.25
-const HAND_CARD_SPACING := 250.0
+## Matches a two-player game hand, so the menu cards and the cards the player
+## picks up a moment later are the same size.
+const HAND_CARD_SCALE := 1.4
+const HAND_CARD_SPACING := 290.0
 ## Card centers sit closer to the edge than the card half-height, so the
 ## bottoms are cut off a little — like the in-game hand.
-const HAND_BOTTOM_OFFSET := 190.0
-## Outer cards of the fan sit slightly lower and more rotated, like the game hand.
-const HAND_ARC_DROP := 18.0
-const HAND_ROTATION_STEP_DEGREES := 8.0
+const HAND_BOTTOM_OFFSET := 215.0
+## Outer cards sit lower and more rotated, giving the fan its arc. These are the
+## two-player game hand's arc_height and max_rotation_degrees — for a hand of
+## three, that hand's curve works out to exactly this drop on the outer cards.
+const HAND_ARC_DROP := 55.0
+const HAND_ROTATION_STEP_DEGREES := 10.0
 const HAND_FLY_TIME := 0.45
 const HAND_STAGGER := 0.12
 const HAND_SLIDE_OUT_TIME := 0.3
@@ -468,7 +474,8 @@ func show_player_count_label() -> void:
 	label.add_theme_color_override("font_color", UiPalette.ACCENT)
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.size = Vector2(screen.x, 80.0)
-	label.position = Vector2(0.0, screen.y - 560.0)
+	# High enough that a hovered card's lifted top corner stays clear of it.
+	label.position = Vector2(0.0, screen.y - 640.0)
 	label.modulate.a = 0.0
 	add_child(label)
 

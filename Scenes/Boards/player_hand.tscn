@@ -7,15 +7,15 @@
 script = ExtResource("1_dee3m")
 
 [node name="PlayerCard1" parent="." instance=ExtResource("2_7v2tf")]
-position = Vector2(355, 1780)
+position = Vector2(250, 1735)
 rotation = -0.174533
-scale = Vector2(1.25, 1.25)
+scale = Vector2(1.4, 1.4)
 
 [node name="PlayerCard2" parent="." instance=ExtResource("2_7v2tf")]
-position = Vector2(540, 1710)
-scale = Vector2(1.25, 1.25)
+position = Vector2(540, 1680)
+scale = Vector2(1.4, 1.4)
 
 [node name="PlayerCard3" parent="." instance=ExtResource("2_7v2tf")]
-position = Vector2(725, 1780)
+position = Vector2(830, 1735)
 rotation = 0.174533
-scale = Vector2(1.25, 1.25)
+scale = Vector2(1.4, 1.4)

@@ -3,16 +3,37 @@
 extends Node2D
 
 const CARD_COLLISION_MASK = 1
-## Matches the title screen's card buttons (their 1.25 on the same card scene).
-const NORMAL_CARD_SCALE = Vector2(1.25, 1.25)
-const HOVERED_CARD_SCALE = NORMAL_CARD_SCALE * 1.05
+## Cards resting on the board — the deck and discard piles — are drawn smaller
+## than the ones in a hand, which leaves the hands room to fan out without
+## piling up. Must stay in step with the DeckSprite/DiscardPileSprite scale in
+## the scene (they are bare sprites, so their scale is this times the card
+## sprite's 2). A card only travels between this size and a hand's size, never
+## jumping: see board_card_rest_scale().
+const NORMAL_CARD_SCALE = Vector2(1.05, 1.05)
+## How much a hovered board card swells past whatever size it is resting at.
+const HOVER_SCALE_MULTIPLIER = 1.05
 const SNAP_TIME = 0.18
 const DEAL_FLY_TIME = 0.28
 const DEAL_STAGGER_TIME = 0.07
 const DISCARD_FLY_TIME = 0.34
 const SWAP_FLY_TIME = 0.4
-## Horizontal offset of the deck and discard slots from the screen center.
+## Horizontal offset of the deck and discard slots from the screen center. Far
+## enough out that the hand-sized drawn card fits between the two piles.
 const BOARD_SLOT_OFFSET_X = 375.0
+
+# ── Hand sizing — a fan of three cards has to fit the screen's short edge, so
+# the cards shrink a step when a third player joins the same table. ───────────
+const HAND_CARD_SCALE_2P = Vector2(1.4, 1.4)
+const HAND_CARD_SCALE_3P = Vector2(1.25, 1.25)
+const HAND_SPACING_2P = 290.0
+## Steps down with the card size, so a three-player fan is the two-player fan at
+## a smaller scale — same arc, same overlap, not a row of spread-out cards.
+const HAND_SPACING_3P = 259.0
+const HAND_ARC_HEIGHT = 55.0
+const HAND_MAX_ROTATION_DEGREES = 10.0
+## How far a hand's center sits from the screen edge it hugs.
+const HAND_EDGE_OFFSET_2P = 240.0
+const HAND_EDGE_OFFSET_3P = 235.0
 ## Special-power dim overlay z-index; the selectable hand is raised above it.
 const OVERLAY_Z_INDEX = 150
 const RAISED_HAND_Z_INDEX = 200
@@ -133,6 +154,7 @@ func layout_board_for_screen() -> void:
 	var center: Vector2 = screen_size * 0.5
 	player2_hand.position = screen_size
 	player3_hand.visible = player_count == 3
+	apply_hand_sizing()
 
 	if player_count == 3:
 		player3_hand.position = Vector2(0.0, screen_size.y)
@@ -152,6 +174,35 @@ func layout_board_for_screen() -> void:
 		discard_pile_sprite.position = Vector2(center.x + BOARD_SLOT_OFFSET_X, center.y)
 
 	discard_top_card.position = discard_pile_sprite.position
+
+
+## The size a card takes in the active player's hand. Everything that travels
+## into or out of a hand tweens between this and NORMAL_CARD_SCALE, so a card
+## never changes size in a single frame.
+func hand_card_scale() -> Vector2:
+	return get_active_hand().card_scale
+
+
+## Where a board card sits when nothing is happening to it. The drawn card is
+## already on its way to a hand, so it rests at hand size the moment it leaves
+## the deck; the discard pile's top card rests at the pile's size and only grows
+## once the player picks it up.
+func board_card_rest_scale(card: BoardCard) -> Vector2:
+	return hand_card_scale() if card == center_draw_card else NORMAL_CARD_SCALE
+
+
+## Size every hand for the current player count. Each setter re-arranges the
+## fan, so the cards pick the new size up without any extra call.
+func apply_hand_sizing() -> void:
+	var is_two_player: bool = player_count == 2
+	var edge_offset: float = HAND_EDGE_OFFSET_2P if is_two_player else HAND_EDGE_OFFSET_3P
+	for hand: PlayerHand in [player1_hand, player2_hand, player3_hand]:
+		hand.card_scale = HAND_CARD_SCALE_2P if is_two_player else HAND_CARD_SCALE_3P
+		hand.card_spacing = HAND_SPACING_2P if is_two_player else HAND_SPACING_3P
+		hand.arc_height = HAND_ARC_HEIGHT
+		hand.max_rotation_degrees = HAND_MAX_ROTATION_DEGREES
+		hand.bottom_offset = edge_offset
+		hand.top_offset = edge_offset
 
 
 ## Smooth arrival from the title screen: it fades to black before the scene
@@ -197,7 +248,7 @@ func deal_initial_hands_animated() -> void:
 	var deck_rotation: float = deck_sprite.rotation_degrees
 	for hand in hands:
 		hand.arrange_cards()
-		hand.stack_cards_at_deck(deck_pos, deck_rotation)
+		hand.stack_cards_at_deck(deck_pos, deck_rotation, deck_scale)
 
 	var slots_per_hand: int = player1_hand.cards.size()
 	for slot in range(slots_per_hand):
@@ -432,7 +483,9 @@ func start_card_drag(card: Node2D) -> void:
 	if board_card == null or not board_card.can_drag:
 		return
 
-	board_card.tween_hover_scale(NORMAL_CARD_SCALE)
+	# A card being dragged is on its way to a hand, so it takes the hand's size
+	# now rather than snapping to it on the drop.
+	board_card.tween_hover_scale(hand_card_scale())
 	CardShader.set_hover(board_card.sprite, 1.0)
 	CardShader.set_inset(board_card.sprite, 0.0)
 	dragged_card = board_card
@@ -471,7 +524,8 @@ func on_board_card_hovered_off(card: BoardCard) -> void:
 
 
 func highlight_card(card: BoardCard, is_hovered: bool) -> void:
-	card.tween_hover_scale(HOVERED_CARD_SCALE if is_hovered else NORMAL_CARD_SCALE)
+	var rest_scale := board_card_rest_scale(card)
+	card.tween_hover_scale(rest_scale * HOVER_SCALE_MULTIPLIER if is_hovered else rest_scale)
 	CardShader.set_hover(card.sprite, 1.0 if is_hovered else 0.0)
 	if is_hovered:
 		CardShader.set_inset(card.sprite, 0.0)
@@ -737,7 +791,9 @@ func deal_center_draw_card() -> void:
 	var move_tween := create_tween().set_parallel(true)
 	move_tween.tween_property(center_draw_card, "global_position", get_draw_card_rest_position(), initial_deal_fly_time) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	move_tween.tween_property(center_draw_card, "scale", NORMAL_CARD_SCALE, initial_deal_fly_time) \
+	# Grows out of the pile to hand size — it is a card in play now, not one
+	# sitting on the board.
+	move_tween.tween_property(center_draw_card, "scale", hand_card_scale(), initial_deal_fly_time) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	move_tween.tween_property(center_draw_card, "rotation_degrees", target_rotation, initial_deal_fly_time) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
@@ -770,6 +826,9 @@ func discard_center_draw_card() -> void:
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	move_tween.tween_property(center_draw_card, "rotation_degrees", discard_pile_sprite.rotation_degrees, SNAP_TIME) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	# Back down to the pile's size on the way out of play.
+	move_tween.tween_property(center_draw_card, "scale", NORMAL_CARD_SCALE, SNAP_TIME) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	await move_tween.finished
 
 	place_card_on_discard(center_draw_card)
@@ -787,8 +846,12 @@ func swap_draw_card_with_player_card(player_card: PlayerCard) -> void:
 	var old_card_data := player_card.to_card_data()
 	var new_card_data := center_draw_card.to_card_data()
 
-	var move_tween := create_tween()
+	# Grow to the hand's card size on the way in, so the card the player let go
+	# of is exactly the card that ends up in the slot.
+	var move_tween := create_tween().set_parallel(true)
 	move_tween.tween_property(center_draw_card, "global_position", player_card.global_position, SNAP_TIME) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	move_tween.tween_property(center_draw_card, "scale", player_card.resting_scale, SNAP_TIME) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	await move_tween.finished
 
@@ -801,7 +864,7 @@ func swap_draw_card_with_player_card(player_card: PlayerCard) -> void:
 	play_place_sound()
 	center_draw_card.visible = false
 
-	await animate_card_to_discard(old_card_data, player_card.global_position)
+	await animate_card_to_discard(old_card_data, player_card.global_position, player_card.resting_scale)
 	advance_to_next_player()
 	await start_turn()
 
@@ -816,7 +879,7 @@ func return_center_draw_card() -> void:
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	await move_tween.finished
 
-	center_draw_card.scale = NORMAL_CARD_SCALE
+	center_draw_card.scale = hand_card_scale()
 	center_draw_card.can_drag = true
 	# Only keep the hover look if the pointer actually rests on the card — and
 	# a finger that has lifted rests on nothing, wherever it left the pointer.
@@ -836,8 +899,10 @@ func take_discard_card(player_card: PlayerCard) -> void:
 	var old_hand_data := player_card.to_card_data()
 	var taken_data := discard_top_card.to_card_data()
 
-	var move_tween := create_tween()
+	var move_tween := create_tween().set_parallel(true)
 	move_tween.tween_property(discard_top_card, "global_position", player_card.global_position, SNAP_TIME) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	move_tween.tween_property(discard_top_card, "scale", player_card.resting_scale, SNAP_TIME) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	await move_tween.finished
 
@@ -852,12 +917,14 @@ func take_discard_card(player_card: PlayerCard) -> void:
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	center_tween.tween_property(center_draw_card, "rotation_degrees", discard_pile_sprite.rotation_degrees, DISCARD_FLY_TIME) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	center_tween.tween_property(center_draw_card, "scale", NORMAL_CARD_SCALE, DISCARD_FLY_TIME) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	await center_tween.finished
 	place_card_on_discard(center_draw_card)
 	play_place_sound()
 	center_draw_card.visible = false
 
-	await animate_card_to_discard(old_hand_data, player_card.global_position)
+	await animate_card_to_discard(old_hand_data, player_card.global_position, player_card.resting_scale)
 
 	advance_to_next_player()
 	await start_turn()
@@ -867,12 +934,14 @@ func return_discard_card() -> void:
 	turn_state = TurnState.ANIMATING
 
 	play_slide_sound()
-	var move_tween := create_tween()
+	var move_tween := create_tween().set_parallel(true)
 	move_tween.tween_property(discard_top_card, "global_position", discard_pile_position, SNAP_TIME) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	# Shrinks back to the pile's size — picking it up had grown it to hand size.
+	move_tween.tween_property(discard_top_card, "scale", NORMAL_CARD_SCALE, SNAP_TIME) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	await move_tween.finished
 
-	discard_top_card.scale = NORMAL_CARD_SCALE
 	# Only keep the hover look if the pointer actually rests on the card — and
 	# a finger that has lifted rests on nothing, wherever it left the pointer.
 	var pointer_on_card := TapGesture.is_pointer_hovering() \
@@ -881,7 +950,9 @@ func return_discard_card() -> void:
 	turn_state = TurnState.WAITING_FOR_DROP
 
 
-func animate_card_to_discard(card_data: Dictionary, start_position: Vector2) -> void:
+## `start_scale` is the size the card had where it left — a hand's card size for
+## the usual case — so it shrinks to the board's size as it flies to the pile.
+func animate_card_to_discard(card_data: Dictionary, start_position: Vector2, start_scale: Vector2) -> void:
 	flying_card.visible = true
 	flying_card.setup_card(
 		card_data["rank"],
@@ -889,11 +960,13 @@ func animate_card_to_discard(card_data: Dictionary, start_position: Vector2) -> 
 		card_data["texture"]
 	)
 	flying_card.global_position = start_position
-	flying_card.scale = NORMAL_CARD_SCALE
+	flying_card.scale = start_scale
 	flying_card.z_index = FLYING_CARD_Z
 
-	var move_tween := create_tween()
+	var move_tween := create_tween().set_parallel(true)
 	move_tween.tween_property(flying_card, "global_position", discard_pile_position, DISCARD_FLY_TIME) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	move_tween.tween_property(flying_card, "scale", NORMAL_CARD_SCALE, DISCARD_FLY_TIME) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	flying_card.flip_to_front(false)
 
@@ -1236,26 +1309,29 @@ func show_game_over_overlay() -> void:
 
 	game_over_overlay = create_fullscreen_overlay(0.9, 400)
 
-	# The winner line runs vertically through the center so both players can
-	# read it from their side of the phone.
-	var title_label := make_overlay_label(title, 72)
-	title_label.size = Vector2(screen_size.y, 110.0)
-	title_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	title_label.pivot_offset = title_label.size * 0.5
-	title_label.rotation_degrees = 90.0
-	title_label.position = (screen_size - title_label.size) * 0.5
-	game_over_overlay.add_child(title_label)
+	# Winner, totals, and the exit hint are one column, so they stay together
+	# under the headline. The whole block turns sideways and sits in the middle
+	# of the screen, where every player can read it from their side of the phone.
+	var block := VBoxContainer.new()
+	block.alignment = BoxContainer.ALIGNMENT_CENTER
+	block.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	block.add_theme_constant_override("separation", 24)
+	game_over_overlay.add_child(block)
 
-	var layout := VBoxContainer.new()
-	layout.position = Vector2(0.0, screen_size.y * 0.72)
-	layout.size = Vector2(screen_size.x, screen_size.y * 0.24)
-	layout.alignment = BoxContainer.ALIGNMENT_CENTER
-	layout.add_theme_constant_override("separation", 24)
-	game_over_overlay.add_child(layout)
-
+	block.add_child(make_overlay_label(title, 72))
 	for i in range(scores.size()):
-		layout.add_child(make_overlay_label("Player %d: %d points" % [i + 1, scores[i]], 40))
-	layout.add_child(make_overlay_label("Tap anywhere for the main menu", 30))
+		block.add_child(make_overlay_label("Player %d: %d points" % [i + 1, scores[i]], 40))
+	block.add_child(make_overlay_label("Tap anywhere for the main menu", 30))
+
+	# Turned a quarter turn, the block's own width runs down the screen's long
+	# edge, so it is sized from that and centered on both axes. Godot grows a
+	# Control that is set smaller than its contents, so the height is read back
+	# rather than assumed.
+	block.size = Vector2(screen_size.y, block.get_combined_minimum_size().y)
+	var block_size := block.size
+	block.pivot_offset = block_size * 0.5
+	block.rotation_degrees = 90.0
+	block.position = (screen_size - block_size) * 0.5
 
 
 func make_overlay_label(label_text: String, font_size: int) -> Label:

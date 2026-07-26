@@ -5,17 +5,19 @@ extends Node2D
 class_name PlayerHand
 
 # ── Layout — every property instantly updates the editor preview ──────────────
-@export var card_spacing: float = 185.0:
+# Defaults match the two-player table; GameManager overrides them per player
+# count, since three hands share the same screen edge.
+@export var card_spacing: float = 290.0:
 	set(v): card_spacing = v; _refresh()
-@export var arc_height: float = 70.0:
+@export var arc_height: float = 55.0:
 	set(v): arc_height = v; _refresh()
-@export var bottom_offset: float = 210.0:
+@export var bottom_offset: float = 240.0:
 	set(v): bottom_offset = v; _refresh()
-@export var top_offset: float = 210.0:
+@export var top_offset: float = 240.0:
 	set(v): top_offset = v; _refresh()
 @export var max_rotation_degrees: float = 10.0:
 	set(v): max_rotation_degrees = v; _refresh()
-@export var card_scale: Vector2 = Vector2(1.25, 1.25):
+@export var card_scale: Vector2 = Vector2(1.4, 1.4):
 	set(v): card_scale = v; _refresh()
 
 # ── Identity ──────────────────────────────────────────────────────────────────
@@ -58,12 +60,17 @@ func deal_from_deck(deck: Array[Dictionary]) -> void:
 		cards[i].setup_card(d["rank"], d["suit"], d["texture"])
 
 
-## Move every slot to the deck so cards can fly in one at a time.
-func stack_cards_at_deck(deck_global_pos: Vector2, deck_rotation_degrees: float = 0.0) -> void:
+## Move every slot to the deck so cards can fly in one at a time. Hand cards are
+## drawn larger than cards on the board, so the stack shrinks to the pile's size
+## and each card grows back on its way out.
+func stack_cards_at_deck(deck_global_pos: Vector2, deck_rotation_degrees: float, deck_scale: Vector2) -> void:
 	for card in cards:
 		card.visible = true
 		card.global_position = deck_global_pos
 		card.rotation_degrees = _deck_local_rotation(deck_rotation_degrees)
+		# The card's child sprite is pre-scaled, so divide that out to sit at
+		# exactly the deck pile's on-screen size.
+		card.scale = deck_scale / card.sprite.scale.x
 		card.z_index = 0
 
 
