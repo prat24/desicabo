@@ -95,6 +95,15 @@ func set_drag_hovered(hovered: bool) -> void:
 	tween_toward(target_position, target_scale)
 
 
+## Cut any running hover/selection tween so an outside animation — a swap
+## flight — owns the card's position and scale outright.
+func stop_state_tweens() -> void:
+	if drag_hover_tween:
+		drag_hover_tween.kill()
+	if scale_tween:
+		scale_tween.kill()
+
+
 func tween_toward(target_position: Vector2, target_scale: Vector2) -> void:
 	if drag_hover_tween:
 		drag_hover_tween.kill()

@@ -10,9 +10,12 @@ config_version=5
 
 [application]
 
-config/name="desicabo"
+config/name="Desi Cabo"
 run/main_scene="res://Scenes/UI/main_menu.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
+boot_splash/bg_color=Color(0.043, 0.068, 0.09, 1)
+boot_splash/show_image=false
+boot_splash/image="res://splashicon.png"
 config/icon="uid://ccaudtqcbolm7"
 
 [autoload]

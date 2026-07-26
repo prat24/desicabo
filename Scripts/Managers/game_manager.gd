@@ -61,6 +61,10 @@ var discard_pile_position: Vector2 = Vector2.ZERO
 
 var dragged_card: BoardCard
 var hovered_player_card: PlayerCard
+## Card picking (7 power, player choice) acts on release, not press: on a
+## phone, holding a finger on a card is how the player hovers it.
+var pointer := TapGesture.new()
+var pointer_press_state: TurnState = TurnState.DEALING
 
 var intro_dim_overlay: ColorRect
 var special_overlay: ColorRect
@@ -382,16 +386,20 @@ func _input(event: InputEvent) -> void:
 	if mouse_event == null or mouse_event.button_index != MOUSE_BUTTON_LEFT:
 		return
 
+	# Tracked on every press, even in the states that act on the press itself,
+	# so the hover always knows whether it is following a finger or a mouse.
+	var is_tap := track_pointer_tap(mouse_event)
+
 	match turn_state:
 		TurnState.GAME_OVER:
 			# The overlay marks that final scores are on screen; any tap exits.
 			if mouse_event.pressed and game_over_overlay:
 				return_to_main_menu()
 		TurnState.SPECIAL_7:
-			if mouse_event.pressed:
+			if is_tap:
 				await handle_seven_click()
 		TurnState.CHOOSING_PLAYER:
-			if mouse_event.pressed:
+			if is_tap:
 				handle_choose_click()
 		_:
 			if mouse_event.pressed:
@@ -400,6 +408,20 @@ func _input(event: InputEvent) -> void:
 					start_card_drag(card)
 			elif dragged_card:
 				await end_card_drag()
+
+
+## Feeds the press/release pair to the tap detector and reports, on release,
+## whether it was a quick tap rather than a press-and-hold or a drag.
+func track_pointer_tap(mouse_event: InputEventMouseButton) -> bool:
+	var pointer_position := get_global_mouse_position()
+	if mouse_event.pressed:
+		pointer.press(mouse_event, pointer_position)
+		pointer_press_state = turn_state
+		return false
+
+	# A tap belongs to the phase it started in: a finger already down when a
+	# power begins must not pick a card the press itself could not have picked.
+	return pointer.release(pointer_position) and pointer_press_state == turn_state
 
 
 func start_card_drag(card: Node2D) -> void:
@@ -583,10 +605,7 @@ func set_discard_takeable(takeable: bool) -> void:
 	discard_top_card.get_node("Area2D/CollisionShape2D").set_deferred("disabled", not enabled)
 
 	if not enabled:
-		discard_top_card.is_shader_hovering = false
-		CardShader.set_hover(discard_top_card.sprite, 0.0)
-		CardShader.set_inset(discard_top_card.sprite, CardShader.RESTING_INSET)
-		CardShader.reset_tilt(discard_top_card.sprite)
+		discard_top_card.clear_hover()
 
 
 ## Queen: reveal the active player's own hand.
@@ -675,11 +694,12 @@ func get_opponent_card_at(point: Vector2) -> PlayerCard:
 
 
 func update_choose_hover() -> void:
-	var new_hover := get_opponent_card_at(get_global_mouse_position())
+	var new_hover := get_opponent_card_at(get_global_mouse_position()) if TapGesture.is_pointer_hovering() else null
 
 	if hovered_special_card == new_hover:
 		return
 
+	pointer.hover_target_changed(new_hover != null)
 	if hovered_special_card:
 		hovered_special_card.set_drag_hovered(false)
 	hovered_special_card = new_hover
@@ -798,8 +818,10 @@ func return_center_draw_card() -> void:
 
 	center_draw_card.scale = NORMAL_CARD_SCALE
 	center_draw_card.can_drag = true
-	# Only keep the hover look if the pointer actually rests on the card.
-	var pointer_on_card := center_draw_card.get_global_rect().has_point(get_global_mouse_position())
+	# Only keep the hover look if the pointer actually rests on the card — and
+	# a finger that has lifted rests on nothing, wherever it left the pointer.
+	var pointer_on_card := TapGesture.is_pointer_hovering() \
+		and center_draw_card.get_global_rect().has_point(get_global_mouse_position())
 	highlight_card(center_draw_card, pointer_on_card)
 	turn_state = TurnState.WAITING_FOR_DROP
 
@@ -851,8 +873,10 @@ func return_discard_card() -> void:
 	await move_tween.finished
 
 	discard_top_card.scale = NORMAL_CARD_SCALE
-	# Only keep the hover look if the pointer actually rests on the card.
-	var pointer_on_card := discard_top_card.get_global_rect().has_point(get_global_mouse_position())
+	# Only keep the hover look if the pointer actually rests on the card — and
+	# a finger that has lifted rests on nothing, wherever it left the pointer.
+	var pointer_on_card := TapGesture.is_pointer_hovering() \
+		and discard_top_card.get_global_rect().has_point(get_global_mouse_position())
 	highlight_card(discard_top_card, pointer_on_card)
 	turn_state = TurnState.WAITING_FOR_DROP
 
@@ -1036,12 +1060,17 @@ func get_seven_card_at(point: Vector2) -> PlayerCard:
 	return best_card
 
 
+## A lifted finger leaves the pointer parked on its last spot, so on touch the
+## hover has to end with the press instead of following that ghost.
 func update_seven_hover() -> void:
-	var new_hover := get_seven_card_at(get_global_mouse_position())
+	var new_hover := get_seven_card_at(get_global_mouse_position()) if TapGesture.is_pointer_hovering() else null
 
 	if hovered_special_card == new_hover:
 		return
 
+	# Resting on one card long enough picks it on release, so the clock only
+	# runs while the hover stays put.
+	pointer.hover_target_changed(new_hover != null)
 	if hovered_special_card and hovered_special_card != selected_source_card:
 		hovered_special_card.set_drag_hovered(false)
 
@@ -1092,6 +1121,11 @@ func animate_swap_player_cards(first: PlayerCard, second: PlayerCard) -> void:
 	var first_global := first.global_position
 	var second_global := second.global_position
 
+	# The lift from selecting these two is still tweening their position and
+	# scale; leaving it running would fight the flight for its first frames.
+	first.stop_state_tweens()
+	second.stop_state_tweens()
+
 	first.z_index = RAISED_HAND_Z_INDEX
 	second.z_index = RAISED_HAND_Z_INDEX
 
@@ -1107,8 +1141,12 @@ func animate_swap_player_cards(first: PlayerCard, second: PlayerCard) -> void:
 	second.setup_card(first_data["rank"], first_data["suit"], first_data["texture"])
 	play_place_sound()
 
-	player1_hand.arrange_cards()
-	player2_hand.arrange_cards()
+	# Every hand, not just the first two: the flight parks each card in the
+	# other's slot at a raised z-index, and only its own hand's re-arrange puts
+	# it back. Skipping Player 3's left their card sitting in the hand it flew
+	# to, on top of that player's fan, while their own fan looked a card short.
+	for hand in get_all_hands():
+		hand.arrange_cards()
 
 
 func get_all_hands() -> Array[PlayerHand]:

@@ -87,6 +87,9 @@ var sfx_boom: AudioStreamPlayer
 var hand_cards: Array[PlayerCard] = []
 var clickable_cards: Array[PlayerCard] = []
 var hovered_card: PlayerCard
+## Card buttons act on release, not press: on a phone, holding a finger on a
+## card is how the player hovers it.
+var pointer := TapGesture.new()
 var title_rest_position: Vector2
 var input_enabled := false
 var is_starting_game := false
@@ -227,14 +230,20 @@ func _process(_delta: float) -> void:
 
 	var mouse_position := get_global_mouse_position()
 	var new_hover: PlayerCard = null
-	for card in clickable_cards:
-		if get_card_resting_rect(card).has_point(mouse_position):
-			new_hover = card
-			break
+	# A lifted finger leaves the pointer parked on its last spot, so on touch
+	# the hover has to end with the press instead of following that ghost.
+	if TapGesture.is_pointer_hovering():
+		for card in clickable_cards:
+			if get_card_resting_rect(card).has_point(mouse_position):
+				new_hover = card
+				break
 
 	# Only the in-game hand-hover animation (lift + scale + glow) — no shader
 	# tilt here; it reads as the card twisting around on a static menu.
 	if new_hover != hovered_card:
+		# Resting on one card long enough presses it on release, so the clock
+		# only runs while the hover stays put.
+		pointer.hover_target_changed(new_hover != null)
 		if hovered_card:
 			hovered_card.set_drag_hovered(false)
 		hovered_card = new_hover
@@ -247,11 +256,20 @@ func _input(event: InputEvent) -> void:
 		return
 
 	var mouse_event := event as InputEventMouseButton
-	if mouse_event == null or mouse_event.button_index != MOUSE_BUTTON_LEFT or not mouse_event.pressed:
+	if mouse_event == null or mouse_event.button_index != MOUSE_BUTTON_LEFT:
+		return
+
+	# The press only hovers the card; the button fires when a quick tap lifts
+	# off it, so a press-and-hold can show the hover without picking anything.
+	var tap_position := get_global_mouse_position()
+	if mouse_event.pressed:
+		pointer.press(mouse_event, tap_position)
+		return
+
+	if not pointer.release(tap_position):
 		return
 
 	# Hit-test at the tap position directly: hover state lags a frame on touch.
-	var tap_position := get_global_mouse_position()
 	for card in clickable_cards:
 		if get_card_resting_rect(card).has_point(tap_position):
 			# _input runs before GUI input, so without this the same tap would
