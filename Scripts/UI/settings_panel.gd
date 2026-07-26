@@ -10,15 +10,16 @@ const TRACK_COLOR := Color(0.76, 0.72, 0.64)
 const FILL_COLOR := Color(0.35, 0.3, 0.24)
 const BACKDROP_ALPHA := 0.75
 const SLIDE_TIME := 0.35
-## Resting distance from the top of the screen once the card has slid in.
+## Resting distance from the top of the screen once the card has slid in. The
+## card's height is whatever its contents need — see fit_to_contents().
 const PANEL_TOP := 300.0
 const PANEL_MARGIN_X := 90.0
-const PANEL_HEIGHT := 620.0
 const PANEL_PADDING := 56.0
 const GRABBER_DIAMETER := 56
 
 var backdrop: ColorRect
 var panel: Panel
+var layout: VBoxContainer
 var slide_tween: Tween
 var is_open := false
 var is_closing := false
@@ -30,6 +31,8 @@ func _ready() -> void:
 	z_index = 600
 	build_backdrop()
 	build_panel()
+	fit_to_contents()
+	panel.position.y = -panel.size.y
 	animate_in()
 
 
@@ -48,15 +51,15 @@ func build_panel() -> void:
 
 	panel = Panel.new()
 	panel.add_theme_stylebox_override("panel", make_panel_style())
-	panel.size = Vector2(panel_width, PANEL_HEIGHT)
-	panel.position = Vector2(PANEL_MARGIN_X, -PANEL_HEIGHT)
+	panel.size = Vector2(panel_width, 0.0)
+	panel.position = Vector2(PANEL_MARGIN_X, 0.0)
 	# Swallow taps so clicks on the card never reach the closing backdrop.
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(panel)
 
-	var layout := VBoxContainer.new()
+	layout = VBoxContainer.new()
 	layout.position = Vector2(PANEL_PADDING, PANEL_PADDING)
-	layout.size = Vector2(panel_width - PANEL_PADDING * 2.0, PANEL_HEIGHT - PANEL_PADDING * 2.0)
+	layout.size = Vector2(panel_width - PANEL_PADDING * 2.0, 0.0)
 	layout.add_theme_constant_override("separation", 44)
 	panel.add_child(layout)
 
@@ -66,6 +69,14 @@ func build_panel() -> void:
 
 	layout.add_child(make_volume_row("Music", AudioSettings.music_volume, AudioSettings.set_music_volume))
 	layout.add_child(make_volume_row("Sound Effects", AudioSettings.sfx_volume, AudioSettings.set_sfx_volume))
+
+
+## Close the card around whatever it holds, with the same padding all round.
+## Nothing here wraps, so every row can say how tall it is right away.
+func fit_to_contents() -> void:
+	var content_height: float = layout.get_combined_minimum_size().y
+	layout.size.y = content_height
+	panel.size.y = content_height + PANEL_PADDING * 2.0
 
 
 func make_panel_style() -> StyleBoxFlat:
@@ -192,7 +203,7 @@ func close() -> void:
 	if slide_tween:
 		slide_tween.kill()
 	slide_tween = create_tween().set_parallel(true)
-	slide_tween.tween_property(panel, "position:y", -PANEL_HEIGHT, SLIDE_TIME) \
+	slide_tween.tween_property(panel, "position:y", -panel.size.y, SLIDE_TIME) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
 	slide_tween.tween_property(backdrop, "modulate:a", 0.0, SLIDE_TIME)
 	await slide_tween.finished

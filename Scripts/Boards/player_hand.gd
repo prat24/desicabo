@@ -182,9 +182,11 @@ func _refresh() -> void:
 
 ## Animate all cards flying to shuffled positions and swap their underlying data.
 ## Called when the active player draws a Jack (affects the opponent's hand).
-func jumble_cards() -> void:
+## `new_order` is the slot each card moves to; the caller picks it, so an online
+## game jumbles the same hand the same way on every device.
+func jumble_cards(new_order: Array) -> void:
 	var count := cards.size()
-	if count < 2:
+	if count < 2 or new_order.size() != count:
 		return
 
 	# Snapshot positions and data before anything moves.
@@ -193,18 +195,6 @@ func jumble_cards() -> void:
 	for card in cards:
 		rest_positions.append(card.resting_position)
 		card_data.append(card.to_card_data())
-
-	# Build a shuffled index mapping (guaranteed to change at least one card).
-	var new_order: Array = range(count)
-	new_order.shuffle()
-	var all_fixed := true
-	for idx in range(count):
-		if new_order[idx] != idx:
-			all_fixed = false
-			break
-	if all_fixed:
-		new_order[0] = 1
-		new_order[1] = 0
 
 	# Fly all cards to their new slot positions simultaneously.
 	for card in cards:

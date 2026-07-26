@@ -23,6 +23,7 @@ config/icon="uid://ccaudtqcbolm7"
 AudioSettings="*res://Scripts/Audio/audio_settings.gd"
 Music="*res://Scripts/Audio/music_player.gd"
 HoverSfx="*res://Scripts/Audio/hover_sfx.gd"
+Net="*res://Scripts/Net/net_manager.gd"
 
 [display]
 

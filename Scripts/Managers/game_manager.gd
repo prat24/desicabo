@@ -1,5 +1,13 @@
 ## GameManager — runs the full game loop: dealing, turns, drag-and-drop,
 ## special card powers, scoring, and animations.
+##
+## The same loop runs a hotseat game on one phone and a networked game on
+## several. Online, the host owns the game: it holds the deck, decides what
+## every move does, and sends each device the same sequence of "steps" to
+## animate — with only the cards that device's player is allowed to see. The
+## board itself is identical everywhere (Player 2 turns their phone upside
+## down, Player 3 turns theirs sideways), so a step is just player numbers,
+## slot numbers, and card ranks. See step(), private_step() and personal_step().
 extends Node2D
 
 const CARD_COLLISION_MASK = 1
@@ -68,6 +76,13 @@ const FOCUSED_DRAW_CARD_Z = 250
 ## How far the drawn card steps away from screen center in 3-player mode so
 ## it never covers the tappable discard pile.
 const DRAW_CARD_TURN_OFFSET = 160.0
+## Online, the note telling a waiting player whose turn it is. It sits this far
+## from the middle of the board, in the gap before that player's own hand.
+const TURN_WAIT_LABEL_HEIGHT = 80.0
+const TURN_WAIT_LABEL_BAND = 300.0
+## How often the active player's device sends the card it is dragging to the
+## others — often enough to look live, rarely enough to be nothing on a LAN.
+const NET_DRAG_INTERVAL = 0.05
 const MAIN_MENU_SCENE = "res://Scenes/UI/main_menu.tscn"
 
 const UI_THEME = preload("res://Assets/Themes/clean_ui.tres")
@@ -92,6 +107,16 @@ enum TurnState {
 	GAME_OVER
 }
 
+## What a player's drop meant. The active player's device works this out and
+## the host is the one that carries it out, so it has to survive the wire.
+enum Move {
+	SWAP_DRAWN,     ## Drawn card into one of my slots.
+	DISCARD_DRAWN,  ## Drawn card straight onto the pile.
+	RETURN_DRAWN,   ## Dropped nowhere — put it back and think again.
+	TAKE_DISCARD,   ## Pile's top card into one of my slots.
+	RETURN_DISCARD, ## Picked the pile up and put it back.
+}
+
 var turn_state: TurnState = TurnState.DEALING
 var deck: Array[Dictionary] = []
 var player_count: int = 2
@@ -114,11 +139,39 @@ var game_over_overlay: ColorRect
 var turn_focus_overlay: ColorRect
 var is_returning_to_menu := false
 
+# ── Online play (all inert in a hotseat game) ─────────────────────────────────
+## Set from Net at load. False puts every path below back on its local
+## behaviour, so the hotseat game is unchanged.
+var online := false
+## Which player this device is, 1..player_count. 0 in a hotseat game, where the
+## one screen belongs to whoever's turn it is.
+var my_seat := 0
+## Steps arrive faster than they animate, so they wait their turn here instead
+## of playing on top of each other.
+var net_step_queue: Array = []
+var net_step_running := false
+## Peers whose board is up and ready to be dealt to (host side).
+var ready_peers: Array[int] = []
+## Client side: the host has heard us, so we can stop announcing ourselves.
+var handshake_done := false
+## The card that was drawn this turn, as the host knows it — its own screen
+## keeps that card face down on everyone else's turn, so the node cannot be
+## asked what it is.
+var current_draw: Dictionary = {}
+## The active player's 7-power picks: [own slot, opponent slot] once chosen.
+var seven_choice: Array[int] = []
+var seven_skipped := false
+## True only while the host is waiting for those picks.
+var awaiting_seven := false
+## Throttles the drag position the active player streams to the other devices.
+var net_drag_timer := 0.0
+## Standing "Player N's turn…" note shown to the players who are not up.
+var turn_wait_label: Label
+
 # ── Seven-power selection state ───────────────────────────────────────────────
 var selected_source_card: PlayerCard = null
 var hovered_special_card: PlayerCard = null
 var seven_selecting_opponent: bool = false
-var seven_power_done: bool = false
 var seven_skip_button: Button
 ## The opponent hand a K/J/7 power acts on this turn.
 var seven_target_hand: PlayerHand
@@ -143,6 +196,8 @@ var sfx_slide: AudioStreamPlayer
 
 
 func _ready() -> void:
+	online = Net.is_online
+	my_seat = Net.local_player if online else 0
 	player_count = clampi(GameConfig.player_count, 2, 4)
 	screen_size = get_viewport_rect().size
 	layout_board_for_screen()
@@ -160,11 +215,144 @@ func _ready() -> void:
 	discard_top_card.hovered.connect(on_board_card_hovered)
 	discard_top_card.hovered_off.connect(on_board_card_hovered_off)
 	setup_audio()
-	deck = CardDeck.create_shuffled_deck()
 	fade_in_from_black()
+
+	if online:
+		Net.connection_lost.connect(on_connection_lost)
+		if not is_host():
+			# Everything a client shows arrives as a step from the host.
+			await report_ready_to_host()
+			return
+		await wait_for_players()
+
+	deck = CardDeck.create_shuffled_deck()
 	await deal_initial_hands_animated()
 	await run_pre_game_reveals()
 	await start_turn()
+
+
+# ── Online: who is in charge ──────────────────────────────────────────────────
+
+## The host runs the game and tells the other devices what to show. A hotseat
+## game has no network at all, so it is its own host.
+func is_host() -> bool:
+	return not online or multiplayer.is_server()
+
+
+## Whether this device may act right now. The one screen of a hotseat game
+## always belongs to the active player.
+func is_my_turn() -> bool:
+	return not online or current_player == my_seat
+
+
+## The host may still be loading its own board, and an RPC that lands before
+## its target node exists is dropped — so keep saying we are here until it
+## answers.
+func report_ready_to_host() -> void:
+	while not handshake_done:
+		rpc_id(1, "net_player_ready")
+		await get_tree().create_timer(0.25).timeout
+
+
+func wait_for_players() -> void:
+	while ready_peers.size() < player_count - 1:
+		await get_tree().process_frame
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func net_player_ready() -> void:
+	if not is_host():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if not ready_peers.has(sender):
+		ready_peers.append(sender)
+	rpc_id(sender, "net_ready_acknowledged")
+
+
+@rpc("authority", "call_remote", "reliable")
+func net_ready_acknowledged() -> void:
+	handshake_done = true
+
+
+# ── Online: steps ─────────────────────────────────────────────────────────────
+
+## Run one visible move on every device: the host performs it locally and sends
+## the same call out, so all the boards animate together. Only plain data goes
+## over the wire — a card is a rank and a suit, and an empty rank means "this
+## device is not allowed to know", which leaves the card face down.
+func step(method: StringName, args: Array = []) -> void:
+	if online and is_host():
+		rpc("net_step", method, args)
+	await callv(method, args)
+
+
+## A step that puts a card somewhere face down. Everyone gets the same
+## animation; only the players in `entitled` are told what the card is. The
+## host always uses the real data, since its copy of the hands is the game.
+func private_step(method: StringName, true_args: Array, hidden_args: Array, entitled: Array) -> void:
+	if online and is_host():
+		var others := Net.remote_seats()
+		for peer_id: int in others:
+			rpc_id(peer_id, "net_step", method, true_args if int(others[peer_id]) in entitled else hidden_args)
+	await callv(method, true_args)
+
+
+## A step that turns a card face up, where even the host must be kept in the
+## dark on someone else's turn: `args_for` is asked, per player, what that
+## player may see. Nothing here writes to the host's copy of a hand, so being
+## shown nothing costs it nothing.
+func personal_step(method: StringName, args_for: Callable) -> void:
+	if online and is_host():
+		var others := Net.remote_seats()
+		for peer_id: int in others:
+			rpc_id(peer_id, "net_step", method, args_for.call(int(others[peer_id])))
+	await callv(method, args_for.call(my_seat))
+
+
+@rpc("authority", "call_remote", "reliable")
+func net_step(method: StringName, args: Array) -> void:
+	# The host is the only caller, but nothing outside the step_ family is ever
+	# a legitimate thing to be told to run.
+	if not String(method).begins_with("step_"):
+		return
+
+	net_step_queue.append([method, args])
+	if net_step_running:
+		return
+
+	# ENet delivers these in order; each one animates, so they play one after
+	# another rather than all at once.
+	net_step_running = true
+	while not net_step_queue.is_empty():
+		var next: Array = net_step_queue.pop_front()
+		await callv(next[0], next[1])
+	net_step_running = false
+
+
+## A card in the form the animation code wants it. An empty rank is a card this
+## device may not see: no texture, so it stays face down.
+func make_card(rank: String, suit: String) -> Dictionary:
+	if rank.is_empty():
+		return {"rank": "", "suit": "", "texture": null}
+	return {
+		"rank": rank,
+		"suit": suit,
+		"texture": load(CardDeck.get_card_texture_path(suit, rank)),
+	}
+
+
+func hand_ranks(player: int) -> Array:
+	var ranks: Array = []
+	for card in get_hand(player).cards:
+		ranks.append(card.rank)
+	return ranks
+
+
+func hand_suits(player: int) -> Array:
+	var suits: Array = []
+	for card in get_hand(player).cards:
+		suits.append(card.suit)
+	return suits
 
 
 ## Anchor the board to the real screen size: the scene is authored for
@@ -318,41 +506,83 @@ func play_slide_sound() -> void:
 
 
 func deal_initial_hands_animated() -> void:
-	turn_state = TurnState.DEALING
-
-	var hands := get_all_hands()
-	var deck_pos: Vector2 = deck_sprite.global_position
-	var deck_scale: Vector2 = deck_sprite.scale
-	var deck_rotation: float = deck_sprite.rotation_degrees
-	for hand in hands:
-		hand.arrange_cards()
-		hand.stack_cards_at_deck(deck_pos, deck_rotation, deck_scale)
+	await step("step_prepare_deal")
 
 	var slots_per_hand: int = player1_hand.cards.size()
 	for slot in range(slots_per_hand):
-		for hand in hands:
+		for player in range(1, player_count + 1):
 			if deck.is_empty():
 				return
 
-			await hand.animate_deal_card(
-				slot,
-				deck.pop_front(),
-				deck_pos,
-				initial_deal_fly_time,
-				deck_scale,
-				deck_rotation
+			var dealt: Dictionary = deck.pop_front()
+			# Dealt face down, and nobody is told what it is — not even the
+			# player getting it. The opening peek is what turns these up.
+			await private_step(
+				"step_deal_card",
+				[player, slot, dealt["rank"], dealt["suit"]],
+				[player, slot, "", ""],
+				[]
 			)
-			play_place_sound()
-			if initial_deal_stagger > 0.0:
-				await get_tree().create_timer(initial_deal_stagger).timeout
+
+
+func step_prepare_deal() -> void:
+	turn_state = TurnState.DEALING
+	var deck_pos: Vector2 = deck_sprite.global_position
+	for hand in get_all_hands():
+		hand.arrange_cards()
+		hand.stack_cards_at_deck(deck_pos, deck_sprite.rotation_degrees, deck_sprite.scale)
+
+
+func step_deal_card(player: int, slot: int, rank: String, suit: String) -> void:
+	await get_hand(player).animate_deal_card(
+		slot,
+		make_card(rank, suit),
+		deck_sprite.global_position,
+		initial_deal_fly_time,
+		deck_sprite.scale,
+		deck_sprite.rotation_degrees
+	)
+	play_place_sound()
+	if initial_deal_stagger > 0.0:
+		await get_tree().create_timer(initial_deal_stagger).timeout
 
 
 ## Every player peeks at their hand before Player 1's first turn; a prompt
-## before each reveal warns the other player(s) to look away.
+## before each reveal warns the other player(s) to look away. Online there is
+## nobody to look away — each player has their own screen — so all the peeks
+## happen at once, each phone turning up its own player's hand.
 func run_pre_game_reveals() -> void:
+	if online:
+		await step("step_prompt_everyone", ["Memorise your cards!", turn_prompt_time, 0.25])
+		await personal_step("step_reveal_hand", func(seat: int) -> Array:
+			return [seat, hand_ranks(seat), hand_suits(seat)]
+		)
+		return
+
 	for player in range(1, player_count + 1):
 		await show_reveal_prompt(player)
 		await run_hand_reveal(get_hand(player))
+
+
+## A prompt shown on every device at once, each one turned toward its own
+## player rather than toward whoever is acting.
+func step_prompt_everyone(prompt_text: String, hold_time: float, fade_time: float) -> void:
+	await show_fullscreen_prompt(prompt_text, hold_time, fade_time, maxi(my_seat, 1))
+
+
+## Turn `player`'s hand face up. Empty rank/suit arrays mean this device is not
+## one of the eyes allowed on those cards: it watches the hand light up for
+## exactly as long, with the faces never turning.
+func step_reveal_hand(player: int, ranks: Array, suits: Array) -> void:
+	var hand := get_hand(player)
+	var show_faces := not ranks.is_empty()
+
+	if show_faces:
+		for i in range(mini(ranks.size(), hand.cards.size())):
+			var revealed := make_card(ranks[i], suits[i])
+			hand.cards[i].setup_card(revealed["rank"], revealed["suit"], revealed["texture"])
+
+	await run_hand_reveal(hand, show_faces)
 
 
 func show_reveal_prompt(player_number: int) -> void:
@@ -375,6 +605,14 @@ func show_reveal_prompt(player_number: int) -> void:
 
 
 func show_turn_prompt() -> void:
+	if online:
+		# Nobody hands the phone over, so the prompt says whether the turn is
+		# yours; the players who are waiting then keep a standing note of whose
+		# turn it is over the dimmed board (see update_turn_wait_label).
+		var prompt_text := "Your turn!" if is_my_turn() else "Player %d's turn…" % current_player
+		await show_fullscreen_prompt(prompt_text, turn_prompt_time, 0.15, maxi(my_seat, 1))
+		return
+
 	if player_count == 2:
 		# Face the previous player, who must now look away.
 		var other_player := 3 - current_player
@@ -453,22 +691,31 @@ func show_fullscreen_prompt(prompt_text: String, hold_time: float, fade_time: fl
 	overlay.queue_free()
 
 
-func run_hand_reveal(hand: PlayerHand) -> void:
+## `show_faces` off runs the reveal on the same clock without turning anything
+## over: the players who may not see this hand still watch it light up and go
+## dark again, so every device stays on the same beat.
+func run_hand_reveal(hand: PlayerHand, show_faces := true) -> void:
 	create_intro_dim_overlay()
 	dim_for_hand_reveal(hand, true)
 
-	for card in hand.cards:
-		await card.animate_flip(true, quick_flip_up_time)
-
 	var card_count: int = hand.cards.size()
+	if show_faces:
+		for card in hand.cards:
+			await card.animate_flip(true, quick_flip_up_time)
+	else:
+		await get_tree().create_timer(card_count * quick_flip_up_time).timeout
+
 	var flip_time_total: float = card_count * (quick_flip_up_time + player_card_flip_time)
 	var hold_time: float = maxf(0.0, pre_game_reveal_time - flip_time_total)
 
 	if hold_time > 0.0:
 		await get_tree().create_timer(hold_time).timeout
 
-	for card in hand.cards:
-		await card.animate_flip(false, player_card_flip_time)
+	if show_faces:
+		for card in hand.cards:
+			await card.animate_flip(false, player_card_flip_time)
+	else:
+		await get_tree().create_timer(card_count * player_card_flip_time).timeout
 
 	dim_for_hand_reveal(hand, false)
 	if intro_dim_overlay:
@@ -533,11 +780,45 @@ func _process(_delta: float) -> void:
 		clamp(mouse_position.y, half_size.y, screen_size.y - half_size.y)
 	)
 	update_player_card_drag_hover()
+	broadcast_drag(_delta)
+
+
+## Online, the other players watch the card being dragged around rather than
+## seeing it teleport when it is let go. Sent as a fraction of the screen,
+## since a taller phone is a taller board.
+func broadcast_drag(delta: float) -> void:
+	if not online or not is_my_turn():
+		return
+
+	net_drag_timer += delta
+	if net_drag_timer < NET_DRAG_INTERVAL:
+		return
+	net_drag_timer = 0.0
+	rpc("net_drag", dragged_card == discard_top_card, dragged_card.global_position / screen_size)
+
+
+@rpc("any_peer", "call_remote", "unreliable")
+func net_drag(is_discard_card: bool, normalized_position: Vector2) -> void:
+	# These arrive out of order by design, so anything that lands after the
+	# drop has been played out is stale and ignored.
+	if not online or turn_state != TurnState.WAITING_FOR_DROP:
+		return
+	if Net.seat_of(multiplayer.get_remote_sender_id()) != current_player:
+		return
+
+	var card: BoardCard = discard_top_card if is_discard_card else center_draw_card
+	card.global_position = normalized_position * screen_size
+	card.scale = hand_card_scale()
 
 
 func _input(event: InputEvent) -> void:
 	var mouse_event := event as InputEventMouseButton
 	if mouse_event == null or mouse_event.button_index != MOUSE_BUTTON_LEFT:
+		return
+
+	# Watching someone else's turn: nothing on this screen is touchable, apart
+	# from the tap that leaves the final scores.
+	if online and not is_my_turn() and turn_state != TurnState.GAME_OVER:
 		return
 
 	# Tracked on every press, even in the states that act on the press itself,
@@ -601,19 +882,61 @@ func end_card_drag() -> void:
 	clear_player_card_drag_hover()
 	dragged_card = null
 
+	var slot: int = get_active_hand().cards.find(target_player_card) if target_player_card else -1
+
 	if dropped_card == discard_top_card:
-		if target_player_card:
-			await take_discard_card(target_player_card)
-		else:
-			await return_discard_card()
+		await submit_move(Move.TAKE_DISCARD if slot >= 0 else Move.RETURN_DISCARD, slot)
 		return
 
-	if target_player_card:
-		await swap_draw_card_with_player_card(target_player_card)
+	if slot >= 0:
+		await submit_move(Move.SWAP_DRAWN, slot)
 	elif is_card_over_discard_pile(center_draw_card):
-		await discard_center_draw_card()
+		await submit_move(Move.DISCARD_DRAWN, -1)
 	else:
-		await return_center_draw_card()
+		await submit_move(Move.RETURN_DRAWN, -1)
+
+
+## The active player's device decides what a drop meant; the host is the one
+## that carries it out, so a client sends it over and waits for the steps to
+## come back.
+func submit_move(move: Move, slot: int) -> void:
+	if is_host():
+		await perform_move(move, slot)
+		return
+
+	turn_state = TurnState.ANIMATING
+	rpc_id(1, "net_request_move", int(move), slot)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func net_request_move(move: int, slot: int) -> void:
+	if not is_host() or turn_state != TurnState.WAITING_FOR_DROP:
+		return
+	if not is_request_from_active_player() or move < 0 or move >= Move.size():
+		return
+	if slot >= get_active_hand().cards.size():
+		return
+
+	await perform_move(move as Move, slot)
+
+
+## Only the player whose turn it is may move, whatever their device sends.
+func is_request_from_active_player() -> bool:
+	return Net.seat_of(multiplayer.get_remote_sender_id()) == current_player
+
+
+func perform_move(move: Move, slot: int) -> void:
+	match move:
+		Move.SWAP_DRAWN:
+			await swap_draw_card_into_slot(slot)
+		Move.DISCARD_DRAWN:
+			await discard_center_draw_card()
+		Move.RETURN_DRAWN:
+			await return_center_draw_card()
+		Move.TAKE_DISCARD:
+			await take_discard_into_slot(slot)
+		Move.RETURN_DISCARD:
+			await return_discard_card()
 
 
 func on_board_card_hovered(card: BoardCard) -> void:
@@ -711,20 +1034,35 @@ func get_overlap_area(first_rect: Rect2, second_rect: Rect2) -> float:
 	return overlap_rect.size.x * overlap_rect.size.y
 
 
+## The host's turn loop. Every line of it is a step, so the other devices play
+## the same turn out card for card.
 func start_turn() -> void:
 	if deck.is_empty():
 		await end_game()
 		return
 
-	turn_state = TurnState.DEALING
-	await show_turn_prompt()
-	apply_turn_focus()
+	await step("step_begin_turn", [current_player])
 	await deal_center_draw_card()
 	await check_special_card_effect()
 	# Power effects (reveals, seven swap) restore full brightness when they
 	# finish, so the spotlight has to be re-applied.
+	await step("step_resume_turn")
+
+
+func step_begin_turn(player: int) -> void:
+	current_player = player
+	turn_state = TurnState.DEALING
+	await show_turn_prompt()
 	apply_turn_focus()
-	set_discard_takeable(true)
+
+
+## Hand the turn over to whoever is up. On the devices that are only watching,
+## nothing becomes draggable — they are left with the animation and the note
+## saying whose turn this is.
+func step_resume_turn() -> void:
+	apply_turn_focus()
+	set_discard_takeable(is_my_turn())
+	center_draw_card.can_drag = is_my_turn()
 	turn_state = TurnState.WAITING_FOR_DROP
 
 
@@ -739,12 +1077,45 @@ func apply_turn_focus() -> void:
 		hand.z_index = FOCUSED_HAND_Z if hand == get_active_hand() else 0
 	center_draw_card.z_index = FOCUSED_DRAW_CARD_Z
 	discard_top_card.z_index = FOCUSED_DISCARD_Z
+	update_turn_wait_label()
+
+
+## Online, a player who is not up keeps a standing "Player N's turn…" note over
+## the dimmed board, turned toward their own side of the table. They still
+## watch every card move; they just cannot touch anything.
+func update_turn_wait_label() -> void:
+	if turn_wait_label:
+		turn_wait_label.queue_free()
+		turn_wait_label = null
+	if not online or is_my_turn():
+		return
+
+	turn_wait_label = make_overlay_label("Player %d's turn…" % current_player, 52)
+	turn_wait_label.z_index = TURN_FOCUS_OVERLAY_Z + 1
+	turn_wait_label.size = Vector2(screen_size.x, TURN_WAIT_LABEL_HEIGHT)
+	turn_wait_label.pivot_offset = turn_wait_label.size * 0.5
+	turn_wait_label.rotation_degrees = facing_rotation_degrees(my_seat)
+	turn_wait_label.position = turn_wait_label_position()
+	add_child(turn_wait_label)
+
+
+## The clear band between this player's own hand and the middle of the board,
+## on their side of the screen — the one place a note can sit without covering
+## either the drawn card or anybody's cards.
+func turn_wait_label_position() -> Vector2:
+	var middle: float = screen_size.y * 0.5
+	if my_seat == 2:
+		return Vector2(0.0, middle - TURN_WAIT_LABEL_BAND - TURN_WAIT_LABEL_HEIGHT)
+	return Vector2(0.0, middle + TURN_WAIT_LABEL_BAND)
 
 
 func clear_turn_focus() -> void:
 	if turn_focus_overlay:
 		turn_focus_overlay.queue_free()
 		turn_focus_overlay = null
+	if turn_wait_label:
+		turn_wait_label.queue_free()
+		turn_wait_label = null
 
 	for hand in get_all_hands():
 		hand.z_index = 0
@@ -771,34 +1142,67 @@ func set_discard_takeable(takeable: bool) -> void:
 ## Seven: swap one of the active player's cards with an opponent's card.
 ## With three players, K/J/7 first let the active player pick the opponent.
 func check_special_card_effect() -> void:
-	match center_draw_card.rank:
+	match String(current_draw.get("rank", "")):
 		"Q":
-			await run_hand_reveal(get_active_hand())
+			await reveal_hand_to(current_player, current_player)
 
 		"K":
-			var reveal_hand := await get_power_target_hand("Choose a player whose\ncards you wish to see")
+			var reveal_player := await pick_power_target("Choose a player whose\ncards you wish to see")
 			remove_special_overlay()
-			await run_hand_reveal(reveal_hand)
+			await reveal_hand_to(reveal_player, current_player)
 
 		"J":
-			var jumble_hand := await get_power_target_hand("Choose a player whose\ncards you wish to jumble")
+			var jumble_player := await pick_power_target("Choose a player whose\ncards you wish to jumble")
 			remove_special_overlay()
-			play_slide_sound()
-			await jumble_hand.jumble_cards()
-			play_place_sound()
+			await step("step_jumble_hand", [jumble_player, shuffled_order(get_hand(jumble_player).cards.size())])
 
 		"7":
-			var swap_hand := await get_power_target_hand("Choose a player who\nyou wish to swap with")
-			await run_seven_swap_power(swap_hand)
+			var swap_player := await pick_power_target("Choose a player who\nyou wish to swap with")
+			await run_seven_swap_power(swap_player)
 
 
-## Which hand a K/J/7 power targets: always the other player in 2-player
-## games; in 3-player games the active player taps an opponent's cards.
-func get_power_target_hand(choose_prompt_text: String) -> PlayerHand:
+## Turn `player`'s hand face up, but only on `viewer`'s screen — the K is the
+## one player's look at somebody else's cards, and nobody else gets it. The
+## other devices see the same hand light up with its faces still down.
+func reveal_hand_to(player: int, viewer: int) -> void:
+	await personal_step("step_reveal_hand", func(seat: int) -> Array:
+		if not online or seat == viewer:
+			return [player, hand_ranks(player), hand_suits(player)]
+		return [player, [], []]
+	)
+
+
+func step_jumble_hand(player: int, order: Array) -> void:
+	play_slide_sound()
+	await get_hand(player).jumble_cards(order)
+	play_place_sound()
+
+
+## A shuffled slot order for the jumble, worked out once by the host so every
+## device shuffles the same hand the same way. Guaranteed to move something.
+func shuffled_order(count: int) -> Array:
+	var order: Array = range(count)
+	order.shuffle()
+
+	var all_fixed := true
+	for i in range(count):
+		if order[i] != i:
+			all_fixed = false
+			break
+	if all_fixed and count >= 2:
+		order[0] = 1
+		order[1] = 0
+
+	return order
+
+
+## Which player a K/J/7 power acts on: always the other one in a 2-player game;
+## with three or four, the active player taps an opponent's cards to pick. That
+## tapping is a hotseat path — an online game is two players for now.
+func pick_power_target(choose_prompt_text: String) -> int:
 	if player_count == 2:
-		return get_next_hand()
-	var target_player: int = await choose_target_player(choose_prompt_text)
-	return get_hand(target_player)
+		return current_player % player_count + 1
+	return await choose_target_player(choose_prompt_text)
 
 
 ## Prompt the active player, then light up both opponent hands and wait for a
@@ -871,12 +1275,31 @@ func handle_choose_click() -> void:
 
 
 func deal_center_draw_card() -> void:
-	var card_data: Dictionary = deck.pop_front()
+	current_draw = deck.pop_front()
+	await personal_step("step_draw_card", func(seat: int) -> Array:
+		if may_see_draw(seat):
+			return [current_draw["rank"], current_draw["suit"]]
+		return ["", ""]
+	)
 
+
+## Whether `seat` gets to see the card that was just drawn. The player whose
+## turn it is always does; the rest only when it is a power card, since that
+## one is about to act on somebody else's hand and the table should know.
+func may_see_draw(seat: int) -> bool:
+	return not online or seat == current_player or is_power_rank(current_draw["rank"])
+
+
+func is_power_rank(rank: String) -> bool:
+	return rank in ["7", "J", "Q", "K"]
+
+
+func step_draw_card(rank: String, suit: String) -> void:
+	var drawn := make_card(rank, suit)
 	center_draw_card.setup_card(
-		card_data["rank"],
-		card_data["suit"],
-		card_data["texture"]
+		drawn["rank"],
+		drawn["suit"],
+		drawn["texture"]
 	)
 	center_draw_card.visible = true
 	center_draw_card.z_index = FOCUSED_DRAW_CARD_Z
@@ -907,7 +1330,10 @@ func deal_center_draw_card() -> void:
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	await move_tween.finished
 
-	await center_draw_card.flip_to_front()
+	# A card this device may not see stays face down: the players who are only
+	# watching see it fly out and land, and that is all they learn.
+	if drawn["texture"] != null:
+		await center_draw_card.flip_to_front(is_my_turn())
 
 
 ## Where the drawn card rests this turn. Once the board is a sideways column,
@@ -926,9 +1352,18 @@ func get_draw_card_rest_position() -> Vector2:
 
 
 func discard_center_draw_card() -> void:
+	# The pile is face up, so throwing a card onto it tells the whole table
+	# what it was, whether or not they were allowed to see it in play.
+	await step("step_discard_drawn", [current_draw["rank"], current_draw["suit"]])
+	advance_to_next_player()
+	await start_turn()
+
+
+func step_discard_drawn(rank: String, suit: String) -> void:
 	turn_state = TurnState.ANIMATING
 	center_draw_card.can_drag = false
 	set_discard_takeable(false)
+	turn_over_drawn_card(rank, suit)
 
 	var move_tween := create_tween().set_parallel(true)
 	move_tween.tween_property(center_draw_card, "global_position", discard_pile_position, SNAP_TIME) \
@@ -943,17 +1378,45 @@ func discard_center_draw_card() -> void:
 	place_card_on_discard(center_draw_card)
 	play_place_sound()
 	center_draw_card.visible = false
+
+
+## On its way to the pile, a drawn card the watching players were never shown
+## turns over as it goes — the same way a card swapped out of a hand does.
+func turn_over_drawn_card(rank: String, suit: String) -> void:
+	if not center_draw_card.rank.is_empty():
+		return
+	var revealed := make_card(rank, suit)
+	center_draw_card.setup_card(revealed["rank"], revealed["suit"], revealed["texture"])
+	center_draw_card.flip_to_front(false)
+
+
+func swap_draw_card_into_slot(slot: int) -> void:
+	var replaced: Dictionary = get_active_hand().cards[slot].to_card_data()
+	# The drawn card goes in face down, so only its owner is told what landed
+	# there. The card it pushed out lands face up on the pile for everyone.
+	await private_step(
+		"step_swap_drawn_into_slot",
+		[current_player, slot, current_draw["rank"], current_draw["suit"], replaced["rank"], replaced["suit"]],
+		[current_player, slot, "", "", replaced["rank"], replaced["suit"]],
+		[current_player]
+	)
 	advance_to_next_player()
 	await start_turn()
 
 
-func swap_draw_card_with_player_card(player_card: PlayerCard) -> void:
+func step_swap_drawn_into_slot(
+	player: int,
+	slot: int,
+	rank: String,
+	suit: String,
+	replaced_rank: String,
+	replaced_suit: String
+) -> void:
 	turn_state = TurnState.ANIMATING
 	center_draw_card.can_drag = false
 	set_discard_takeable(false)
 
-	var old_card_data := player_card.to_card_data()
-	var new_card_data := center_draw_card.to_card_data()
+	var player_card: PlayerCard = get_hand(player).cards[slot]
 
 	# Grow to the hand's card size on the way in, so the card the player let go
 	# of is exactly the card that ends up in the slot.
@@ -964,21 +1427,28 @@ func swap_draw_card_with_player_card(player_card: PlayerCard) -> void:
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	await move_tween.finished
 
+	var incoming := make_card(rank, suit)
 	player_card.setup_card(
-		new_card_data["rank"],
-		new_card_data["suit"],
-		new_card_data["texture"]
+		incoming["rank"],
+		incoming["suit"],
+		incoming["texture"]
 	)
 	player_card.set_drag_hovered(false)
 	play_place_sound()
 	center_draw_card.visible = false
 
-	await animate_card_to_discard(old_card_data, player_card.global_position, player_card.resting_scale)
-	advance_to_next_player()
-	await start_turn()
+	await animate_card_to_discard(
+		make_card(replaced_rank, replaced_suit),
+		player_card.global_position,
+		player_card.resting_scale
+	)
 
 
 func return_center_draw_card() -> void:
+	await step("step_return_drawn")
+
+
+func step_return_drawn() -> void:
 	turn_state = TurnState.ANIMATING
 	center_draw_card.can_drag = false
 
@@ -989,10 +1459,10 @@ func return_center_draw_card() -> void:
 	await move_tween.finished
 
 	center_draw_card.scale = hand_card_scale()
-	center_draw_card.can_drag = true
+	center_draw_card.can_drag = is_my_turn()
 	# Only keep the hover look if the pointer actually rests on the card — and
 	# a finger that has lifted rests on nothing, wherever it left the pointer.
-	var pointer_on_card := TapGesture.is_pointer_hovering() \
+	var pointer_on_card := is_my_turn() and TapGesture.is_pointer_hovering() \
 		and center_draw_card.get_global_rect().has_point(get_global_mouse_position())
 	highlight_card(center_draw_card, pointer_on_card)
 	turn_state = TurnState.WAITING_FOR_DROP
@@ -1000,13 +1470,40 @@ func return_center_draw_card() -> void:
 
 ## Take the discard pile's top card into the hand instead of the drawn card:
 ## the drawn card goes onto the pile, then the replaced hand card lands on top.
-func take_discard_card(player_card: PlayerCard) -> void:
+## Everything here is public — the table watched the pile's top card go into
+## that slot, and both of the other cards end up face up on the pile.
+func take_discard_into_slot(slot: int) -> void:
+	var player_card: PlayerCard = get_active_hand().cards[slot]
+	var replaced := player_card.to_card_data()
+	var taken := discard_top_card.to_card_data()
+
+	await step("step_take_discard_into_slot", [
+		current_player, slot,
+		taken["rank"], taken["suit"],
+		current_draw["rank"], current_draw["suit"],
+		replaced["rank"], replaced["suit"],
+	])
+	advance_to_next_player()
+	await start_turn()
+
+
+func step_take_discard_into_slot(
+	player: int,
+	slot: int,
+	taken_rank: String,
+	taken_suit: String,
+	drawn_rank: String,
+	drawn_suit: String,
+	replaced_rank: String,
+	replaced_suit: String
+) -> void:
 	turn_state = TurnState.ANIMATING
 	center_draw_card.can_drag = false
 	set_discard_takeable(false)
 
-	var old_hand_data := player_card.to_card_data()
-	var taken_data := discard_top_card.to_card_data()
+	var player_card: PlayerCard = get_hand(player).cards[slot]
+	var old_hand_data := make_card(replaced_rank, replaced_suit)
+	var taken_data := make_card(taken_rank, taken_suit)
 
 	var move_tween := create_tween().set_parallel(true)
 	move_tween.tween_property(discard_top_card, "global_position", player_card.global_position, SNAP_TIME) \
@@ -1020,6 +1517,7 @@ func take_discard_card(player_card: PlayerCard) -> void:
 	play_place_sound()
 	discard_top_card.visible = false
 
+	turn_over_drawn_card(drawn_rank, drawn_suit)
 	play_slide_sound()
 	var center_tween := create_tween().set_parallel(true)
 	center_tween.tween_property(center_draw_card, "global_position", discard_pile_position, DISCARD_FLY_TIME) \
@@ -1035,11 +1533,12 @@ func take_discard_card(player_card: PlayerCard) -> void:
 
 	await animate_card_to_discard(old_hand_data, player_card.global_position, player_card.resting_scale)
 
-	advance_to_next_player()
-	await start_turn()
-
 
 func return_discard_card() -> void:
+	await step("step_return_discard")
+
+
+func step_return_discard() -> void:
 	turn_state = TurnState.ANIMATING
 
 	play_slide_sound()
@@ -1053,7 +1552,7 @@ func return_discard_card() -> void:
 
 	# Only keep the hover look if the pointer actually rests on the card — and
 	# a finger that has lifted rests on nothing, wherever it left the pointer.
-	var pointer_on_card := TapGesture.is_pointer_hovering() \
+	var pointer_on_card := is_my_turn() and TapGesture.is_pointer_hovering() \
 		and discard_top_card.get_global_rect().has_point(get_global_mouse_position())
 	highlight_card(discard_top_card, pointer_on_card)
 	turn_state = TurnState.WAITING_FOR_DROP
@@ -1130,14 +1629,32 @@ func set_hand_enabled(hand: PlayerHand, enabled: bool) -> void:
 		card.modulate = Color.WHITE if enabled else Color(0.35, 0.35, 0.35)
 
 
-func run_seven_swap_power(target_hand: PlayerHand) -> void:
-	turn_state = TurnState.SPECIAL_7
+## The host's side of the 7: put every device into the picking state, wait for
+## the active player's two cards (from this device or over the wire), then swap
+## them everywhere. Nothing resumes until the cards have landed.
+func run_seven_swap_power(target_player: int) -> void:
+	seven_choice.clear()
+	seven_skipped = false
+	awaiting_seven = true
 
-	seven_target_hand = target_hand
+	await step("step_begin_seven", [target_player])
+
+	while seven_choice.is_empty() and not seven_skipped:
+		await get_tree().process_frame
+	awaiting_seven = false
+
+	if not seven_skipped:
+		await step("step_seven_swap", [current_player, seven_choice[0], target_player, seven_choice[1]])
+	await step("step_end_seven")
+
+
+## Only the active player's device gets the skip button and the picking state;
+## the others just watch their hands dim and wait.
+func step_begin_seven(target_player: int) -> void:
+	seven_target_hand = get_hand(target_player)
 	selected_source_card = null
 	hovered_special_card = null
 	seven_selecting_opponent = false
-	seven_power_done = false
 
 	# Drop the board cards below the seven overlay so the drawn 7 dims and
 	# cannot cover the skip button; the turn spotlight restores them after.
@@ -1145,14 +1662,29 @@ func run_seven_swap_power(target_hand: PlayerHand) -> void:
 	discard_top_card.z_index = 5
 
 	create_special_overlay()
-	show_seven_skip_button()
 	set_seven_phase_hands(true)
 
-	# Block until the swap animation finishes or the player skips, so the
-	# turn cannot resume while cards are still flying.
-	while not seven_power_done:
-		await get_tree().process_frame
+	if is_my_turn():
+		show_seven_skip_button()
+		turn_state = TurnState.SPECIAL_7
+	else:
+		turn_state = TurnState.ANIMATING
 
+
+func step_seven_swap(first_player: int, first_slot: int, second_player: int, second_slot: int) -> void:
+	turn_state = TurnState.ANIMATING
+
+	var first: PlayerCard = get_hand(first_player).cards[first_slot]
+	var second: PlayerCard = get_hand(second_player).cards[second_slot]
+	first.set_special_selected(false)
+	second.set_drag_hovered(false)
+	selected_source_card = null
+	hovered_special_card = null
+
+	await animate_swap_player_cards(first, second)
+
+
+func step_end_seven() -> void:
 	remove_seven_skip_button()
 	remove_special_overlay()
 	for hand in get_all_hands():
@@ -1214,7 +1746,11 @@ func on_seven_skip_pressed() -> void:
 		hovered_special_card.set_drag_hovered(false)
 		hovered_special_card = null
 
-	seven_power_done = true
+	turn_state = TurnState.ANIMATING
+	if is_host():
+		seven_skipped = true
+	else:
+		rpc_id(1, "net_request_seven_skip")
 
 
 ## Light up and raise the selectable hand, dim and lower the rest.
@@ -1281,17 +1817,36 @@ func handle_seven_click() -> void:
 		selected_source_card.z_index = RAISED_HAND_Z_INDEX
 		return
 
-	var source_card := selected_source_card
-	var target_card := clicked_card
-
+	# Both cards are picked. The host is the one that performs the swap — on
+	# every device at once — so this only reports the two slots and waits.
+	var source_slot: int = get_active_hand().cards.find(selected_source_card)
+	var target_slot: int = seven_target_hand.cards.find(clicked_card)
 	turn_state = TurnState.ANIMATING
-	source_card.set_special_selected(false)
-	target_card.set_drag_hovered(false)
-	selected_source_card = null
-	hovered_special_card = null
 
-	await animate_swap_player_cards(source_card, target_card)
-	seven_power_done = true
+	if is_host():
+		seven_choice = [source_slot, target_slot]
+	else:
+		rpc_id(1, "net_request_seven", source_slot, target_slot)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func net_request_seven(source_slot: int, target_slot: int) -> void:
+	if not is_host() or not awaiting_seven or not is_request_from_active_player():
+		return
+	if source_slot < 0 or source_slot >= get_active_hand().cards.size():
+		return
+	if target_slot < 0 or target_slot >= seven_target_hand.cards.size():
+		return
+
+	seven_choice = [source_slot, target_slot]
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func net_request_seven_skip() -> void:
+	if not is_host() or not awaiting_seven or not is_request_from_active_player():
+		return
+
+	seven_skipped = true
 
 
 ## Fly two cards to each other's slots, then swap their data and snap back.
@@ -1352,11 +1907,6 @@ func get_active_hand() -> PlayerHand:
 	return get_hand(current_player)
 
 
-## The hand of the player after the active one in turn order.
-func get_next_hand() -> PlayerHand:
-	return get_hand(current_player % player_count + 1)
-
-
 ## Turn order cycles 1 → 2 → (3) → 1.
 func advance_to_next_player() -> void:
 	current_player = current_player % player_count + 1
@@ -1372,10 +1922,32 @@ func facing_rotation_degrees(player: int) -> float:
 		_: return 0.0
 
 
+## The deck ran out. Every hand goes face up now, so this is the one step that
+## hands the whole table's cards to every device — they each work the scores
+## out from what they were told.
 func end_game() -> void:
+	var ranks: Array = []
+	var suits: Array = []
+	for player in range(1, player_count + 1):
+		ranks.append(hand_ranks(player))
+		suits.append(hand_suits(player))
+
+	await step("step_end_game", [ranks, suits])
+
+
+func step_end_game(ranks: Array, suits: Array) -> void:
 	turn_state = TurnState.GAME_OVER
 	clear_turn_focus()
 	center_draw_card.visible = false
+
+	for player in range(1, player_count + 1):
+		var hand := get_hand(player)
+		var player_ranks: Array = ranks[player - 1]
+		var player_suits: Array = suits[player - 1]
+		for i in range(mini(player_ranks.size(), hand.cards.size())):
+			var final_card := make_card(player_ranks[i], player_suits[i])
+			hand.cards[i].setup_card(final_card["rank"], final_card["suit"], final_card["texture"])
+
 	await reveal_all_cards()
 	show_game_over_overlay()
 
@@ -1457,10 +2029,23 @@ func make_overlay_label(label_text: String, font_size: int) -> Label:
 	return label
 
 
+## Someone dropped out (or quit to their own menu): the match cannot go on, so
+## every device that is still here says so and heads back to the title screen.
+func on_connection_lost(reason: String) -> void:
+	if is_returning_to_menu:
+		return
+
+	turn_state = TurnState.ANIMATING
+	clear_turn_focus()
+	await show_fullscreen_prompt(reason, 1.6, 0.2, maxi(my_seat, 1))
+	return_to_main_menu()
+
+
 func return_to_main_menu() -> void:
 	if is_returning_to_menu:
 		return
 	is_returning_to_menu = true
+	Net.leave()
 
 	# Fade to black, then swap scenes; the menu fades back in on its side.
 	var fade := create_fullscreen_overlay(0.0, 500)

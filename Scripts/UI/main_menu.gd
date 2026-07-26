@@ -2,9 +2,10 @@
 ## starts invisible; card backs are thrown down beneath the text layer to
 ## reveal it. The title then swells, snaps back with a boom, turns white, and
 ## blasts the pile away. Finally a fanned hand of card buttons rises from the
-## bottom: Local / Online / Settings. Picking Local slides that hand away and
-## deals a second hand asking how many players (2 / 3 / 4). Online is not live
-## yet.
+## bottom: Local / Online / Settings. Picking Local or Online slides that hand
+## away and deals a second hand asking how many players (2 / 3 / 4); Online
+## then opens the host-or-join card. Online is two players for now, so its 3
+## and 4 are dealt out greyed.
 extends Control
 
 const GAME_SCENE_PATH := "res://Scenes/Managers/game_manager.tscn"
@@ -49,13 +50,19 @@ const THROW_LAND_FRACTION := 0.58
 # ── Menu hands (each entry becomes one card button; `id` names its action) ────
 const MAIN_HAND := [
 	{"id": "local", "texture": preload("res://Assets/Art/PNG/TitleCards/Local.png"), "enabled": true},
-	{"id": "online", "texture": preload("res://Assets/Art/PNG/TitleCards/Online.png"), "enabled": false},
+	{"id": "online", "texture": preload("res://Assets/Art/PNG/TitleCards/Online.png"), "enabled": true},
 	{"id": "settings", "texture": preload("res://Assets/Art/PNG/TitleCards/Settings.png"), "enabled": true},
 ]
 const PLAYER_COUNT_HAND := [
 	{"id": "2", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts2.png"), "enabled": true},
 	{"id": "3", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts3.png"), "enabled": true},
 	{"id": "4", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts4.png"), "enabled": true},
+]
+## Same hand for an online game, where only two players are wired up so far.
+const ONLINE_PLAYER_COUNT_HAND := [
+	{"id": "2", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts2.png"), "enabled": true},
+	{"id": "3", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts3.png"), "enabled": false},
+	{"id": "4", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts4.png"), "enabled": false},
 ]
 ## Matches a two-player game hand, so the menu cards and the cards the player
 ## picks up a moment later are the same size.
@@ -99,9 +106,16 @@ var pointer := TapGesture.new()
 var title_rest_position: Vector2
 var input_enabled := false
 var is_starting_game := false
+## Set while the player count hand on screen belongs to Online rather than Local.
+var choosing_online := false
+var online_panel: OnlinePanel
 
 
 func _ready() -> void:
+	# A game that has just ended (or a lobby the player backed out of) can still
+	# be holding a connection open; the menu is always a clean slate.
+	Net.leave()
+	Net.game_starting.connect(on_online_game_starting)
 	sfx_place = CardSfx.create_place_player()
 	sfx_slide = CardSfx.create_slide_player()
 	add_child(sfx_place)
@@ -289,15 +303,19 @@ func _input(event: InputEvent) -> void:
 func handle_card_pressed(card: PlayerCard) -> void:
 	match card.rank:
 		"local":
-			show_player_count_picker(card)
+			choosing_online = false
+			show_player_count_picker(card, PLAYER_COUNT_HAND)
+		"online":
+			choosing_online = true
+			show_player_count_picker(card, ONLINE_PLAYER_COUNT_HAND)
 		"settings":
 			open_settings(card)
-		"2":
-			start_game_with_card(card, 2)
-		"3":
-			start_game_with_card(card, 3)
-		"4":
-			start_game_with_card(card, 4)
+		"2", "3", "4":
+			var player_count := int(card.rank)
+			if choosing_online:
+				open_online_panel(card, player_count)
+			else:
+				start_game_with_card(card, player_count)
 
 
 func open_settings(card: PlayerCard) -> void:
@@ -455,7 +473,7 @@ func slide_out_hand_cards() -> void:
 	hand_cards.clear()
 
 
-func show_player_count_picker(pressed_card: PlayerCard) -> void:
+func show_player_count_picker(pressed_card: PlayerCard, count_hand: Array) -> void:
 	input_enabled = false
 	pressed_card.set_drag_hovered(true)
 	play_place_sound()
@@ -463,8 +481,47 @@ func show_player_count_picker(pressed_card: PlayerCard) -> void:
 
 	await slide_out_hand_cards()
 	show_player_count_label()
-	await fly_in_hand_cards(PLAYER_COUNT_HAND)
+	await fly_in_hand_cards(count_hand)
 	input_enabled = true
+
+
+## Online games are set up on a card over the menu: host one, or join one found
+## on the network. The menu waits here until the panel is dismissed — or until
+## the table fills up, which starts the game from on_online_game_starting().
+func open_online_panel(pressed_card: PlayerCard, player_count: int) -> void:
+	input_enabled = false
+	play_place_sound()
+
+	online_panel = OnlinePanel.new()
+	online_panel.player_count = player_count
+	add_child(online_panel)
+	await online_panel.closed
+
+	online_panel = null
+	if is_starting_game:
+		return
+
+	# Drop the hover the card kept while the panel was open.
+	pressed_card.set_drag_hovered(false)
+	hovered_card = null
+	input_enabled = true
+
+
+## Everyone is in. Both phones get here at the same moment — the host through
+## its own lobby, the joiners over the wire — and load the board together.
+func on_online_game_starting() -> void:
+	if is_starting_game:
+		return
+	is_starting_game = true
+
+	if online_panel:
+		online_panel.close(true)
+
+	var fade := add_fade_overlay(0.0)
+	var fade_tween := create_tween()
+	fade_tween.tween_property(fade, "color:a", 1.0, FADE_OUT_TIME)
+	await fade_tween.finished
+	get_tree().change_scene_to_file(GAME_SCENE_PATH)
 
 
 func show_player_count_label() -> void:
