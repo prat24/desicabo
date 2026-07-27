@@ -83,6 +83,14 @@ const TURN_WAIT_LABEL_BAND = 300.0
 ## How often the active player's device sends the card it is dragging to the
 ## others — often enough to look live, rarely enough to be nothing on a LAN.
 const NET_DRAG_INTERVAL = 0.05
+## The corner menu button sits above every card but under the full-screen
+## prompts, so a prompt covers it rather than the other way around. Its card
+## goes above everything, since it is opened on top of whatever is happening.
+const MENU_BUTTON_Z = 300
+const MENU_PANEL_Z = 600
+## The black that covers everything while the board is swapped or re-dealt.
+const SCENE_FADE_Z = 500
+const SCENE_FADE_TIME = 0.35
 const MAIN_MENU_SCENE = "res://Scenes/UI/main_menu.tscn"
 
 const UI_THEME = preload("res://Assets/Themes/clean_ui.tres")
@@ -137,7 +145,14 @@ var intro_dim_overlay: ColorRect
 var special_overlay: ColorRect
 var game_over_overlay: ColorRect
 var turn_focus_overlay: ColorRect
-var is_returning_to_menu := false
+## Set once the board is on its way out — back to the menu, or to be dealt
+## again — so nothing can start a second exit on top of the first.
+var is_leaving_scene := false
+
+# ── In-game menu ──────────────────────────────────────────────────────────────
+## Dark-glass button in the top-right corner, and the card it opens.
+var game_menu_button: Button
+var game_menu_panel: GameMenuPanel
 
 # ── Online play (all inert in a hotseat game) ─────────────────────────────────
 ## Set from Net at load. False puts every path below back on its local
@@ -215,6 +230,7 @@ func _ready() -> void:
 	discard_top_card.hovered.connect(on_board_card_hovered)
 	discard_top_card.hovered_off.connect(on_board_card_hovered_off)
 	setup_audio()
+	build_game_menu_button()
 	fade_in_from_black()
 
 	if online:
@@ -229,6 +245,88 @@ func _ready() -> void:
 	await deal_initial_hands_animated()
 	await run_pre_game_reveals()
 	await start_turn()
+
+
+# ── In-game menu ──────────────────────────────────────────────────────────────
+
+## A four-player table has no room to spare, so this is as small and as quiet as
+## a button can be and still be found: dark glass in the top-right corner, which
+## every layout leaves clear — the hands on the right edge start below it, and
+## the top-left belongs to Player 2's tilted fan in a four-player game.
+func build_game_menu_button() -> void:
+	game_menu_button = OverlayButton.create_menu_icon(open_game_menu)
+	game_menu_button.position = Vector2(
+		screen_size.x - OverlayButton.HEIGHT - OverlayButton.MARGIN,
+		OverlayButton.MARGIN
+	)
+	game_menu_button.z_index = MENU_BUTTON_Z
+	add_child(game_menu_button)
+
+
+func open_game_menu() -> void:
+	if game_menu_panel or turn_state == TurnState.GAME_OVER or is_leaving_scene:
+		return
+
+	game_menu_panel = GameMenuPanel.new()
+	game_menu_panel.screen = screen_size
+	# Turned toward whoever opened it: their own seat online, and in a hotseat
+	# game the player holding the phone, which is the one whose turn it is.
+	game_menu_panel.facing_degrees = facing_rotation_degrees(my_seat if online else current_player)
+	game_menu_panel.z_index = MENU_PANEL_Z
+	game_menu_panel.restart_requested.connect(on_restart_requested)
+	game_menu_panel.quit_requested.connect(on_quit_requested)
+	game_menu_panel.closed.connect(func() -> void: game_menu_panel = null)
+	add_child(game_menu_panel)
+
+
+## Whether the pointer is on the menu — its button, or the card it opened —
+## rather than on the board.
+func is_pointer_on_game_menu() -> bool:
+	if game_menu_panel:
+		return true
+	if game_menu_button == null:
+		return false
+	return game_menu_button.get_global_rect().has_point(get_viewport().get_mouse_position())
+
+
+func on_quit_requested() -> void:
+	game_menu_panel.close()
+	return_to_main_menu()
+
+
+## Restarting is the host's call to make, so a client asks for it — otherwise
+## one device would re-deal on its own and the table would come apart.
+func on_restart_requested() -> void:
+	game_menu_panel.close()
+	if not online:
+		restart_game()
+	elif is_host():
+		rpc("net_restart")
+	else:
+		rpc_id(1, "net_request_restart")
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func net_request_restart() -> void:
+	if not is_host() or Net.seat_of(multiplayer.get_remote_sender_id()) == 0:
+		return
+	rpc("net_restart")
+
+
+@rpc("authority", "call_local", "reliable")
+func net_restart() -> void:
+	restart_game()
+
+
+## Deal a whole new game. Online this runs on every device at once: each one
+## reloads the board and the host deals again, exactly as it does on arrival.
+func restart_game() -> void:
+	if is_leaving_scene:
+		return
+	is_leaving_scene = true
+
+	await fade_to_black()
+	get_tree().reload_current_scene()
 
 
 # ── Online: who is in charge ──────────────────────────────────────────────────
@@ -474,7 +572,7 @@ func place_hand_at(hand: PlayerHand, center_global: Vector2, tilt_degrees: float
 ## Smooth arrival from the title screen: it fades to black before the scene
 ## change, so this scene starts black and fades in while the deal begins.
 func fade_in_from_black() -> void:
-	var fade := create_fullscreen_overlay(1.0, 500)
+	var fade := create_fullscreen_overlay(1.0, SCENE_FADE_Z)
 	var fade_tween := create_tween()
 	fade_tween.tween_property(fade, "color:a", 0.0, 0.4)
 	fade_tween.tween_callback(fade.queue_free)
@@ -824,6 +922,13 @@ func _input(event: InputEvent) -> void:
 	# Tracked on every press, even in the states that act on the press itself,
 	# so the hover always knows whether it is following a finger or a mouse.
 	var is_tap := track_pointer_tap(mouse_event)
+
+	# A press on the menu belongs to the menu, not to the board under it — the
+	# corner button overlaps a hand, and _input runs before any button sees a
+	# thing. Releases always come through: one that lifted over the button is
+	# still the end of a drag, and dropping it would leave the card stuck.
+	if mouse_event.pressed and is_pointer_on_game_menu():
+		return
 
 	match turn_state:
 		TurnState.GAME_OVER:
@@ -1939,6 +2044,9 @@ func step_end_game(ranks: Array, suits: Array) -> void:
 	turn_state = TurnState.GAME_OVER
 	clear_turn_focus()
 	center_draw_card.visible = false
+	# The scores are read by tapping anywhere, so the corner button steps out of
+	# the way rather than swallowing the tap that leaves.
+	game_menu_button.visible = false
 
 	for player in range(1, player_count + 1):
 		var hand := get_hand(player)
@@ -2032,24 +2140,32 @@ func make_overlay_label(label_text: String, font_size: int) -> Label:
 ## Someone dropped out (or quit to their own menu): the match cannot go on, so
 ## every device that is still here says so and heads back to the title screen.
 func on_connection_lost(reason: String) -> void:
-	if is_returning_to_menu:
+	if is_leaving_scene:
 		return
 
 	turn_state = TurnState.ANIMATING
 	clear_turn_focus()
+	if game_menu_panel:
+		game_menu_panel.close()
 	await show_fullscreen_prompt(reason, 1.6, 0.2, maxi(my_seat, 1))
 	return_to_main_menu()
 
 
 func return_to_main_menu() -> void:
-	if is_returning_to_menu:
+	if is_leaving_scene:
 		return
-	is_returning_to_menu = true
+	is_leaving_scene = true
 	Net.leave()
 
-	# Fade to black, then swap scenes; the menu fades back in on its side.
-	var fade := create_fullscreen_overlay(0.0, 500)
-	var fade_tween := create_tween()
-	fade_tween.tween_property(fade, "color:a", 1.0, 0.35)
-	await fade_tween.finished
+	# The menu fades back in on its side.
+	await fade_to_black()
 	get_tree().change_scene_to_file(MAIN_MENU_SCENE)
+
+
+## Cover the screen in black and leave it there, for a board that is about to be
+## swapped out or dealt again.
+func fade_to_black() -> void:
+	var fade := create_fullscreen_overlay(0.0, SCENE_FADE_Z)
+	var fade_tween := create_tween()
+	fade_tween.tween_property(fade, "color:a", 1.0, SCENE_FADE_TIME)
+	await fade_tween.finished

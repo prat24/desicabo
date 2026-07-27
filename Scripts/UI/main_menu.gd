@@ -109,6 +109,10 @@ var is_starting_game := false
 ## Set while the player count hand on screen belongs to Online rather than Local.
 var choosing_online := false
 var online_panel: OnlinePanel
+## Corner button out of the player count hand, back to Local / Online / Settings.
+var back_button: Button
+## Kept so going back can take the question away with the hand it belongs to.
+var player_count_label: Label
 
 
 func _ready() -> void:
@@ -122,6 +126,7 @@ func _ready() -> void:
 	add_child(sfx_slide)
 	sfx_air_rise = make_title_sfx_player(AIR_RISE_SOUND)
 	sfx_boom = make_title_sfx_player(BOOM_SOUND)
+	build_back_button()
 	run_intro()
 
 
@@ -473,6 +478,32 @@ func slide_out_hand_cards() -> void:
 	hand_cards.clear()
 
 
+## Corner button out of the player count hand. Only up once that second hand has
+## been dealt — the first one has nowhere to go back to.
+func build_back_button() -> void:
+	back_button = OverlayButton.create_text("Back", on_back_pressed)
+	back_button.position = Vector2(OverlayButton.MARGIN, OverlayButton.MARGIN)
+	back_button.visible = false
+	back_button.z_index = 10
+	add_child(back_button)
+
+
+## Put the player count hand away and deal the first hand again.
+func on_back_pressed() -> void:
+	if not input_enabled or is_starting_game:
+		return
+
+	input_enabled = false
+	back_button.visible = false
+	choosing_online = false
+	play_place_sound()
+
+	await slide_out_hand_cards()
+	hide_player_count_label()
+	await fly_in_hand_cards(MAIN_HAND)
+	input_enabled = true
+
+
 func show_player_count_picker(pressed_card: PlayerCard, count_hand: Array) -> void:
 	input_enabled = false
 	pressed_card.set_drag_hovered(true)
@@ -482,6 +513,7 @@ func show_player_count_picker(pressed_card: PlayerCard, count_hand: Array) -> vo
 	await slide_out_hand_cards()
 	show_player_count_label()
 	await fly_in_hand_cards(count_hand)
+	back_button.visible = true
 	input_enabled = true
 
 
@@ -526,20 +558,31 @@ func on_online_game_starting() -> void:
 
 func show_player_count_label() -> void:
 	var screen: Vector2 = get_viewport_rect().size
-	var label := Label.new()
-	label.text = "How many players?"
-	label.theme = UI_THEME
-	label.add_theme_font_size_override("font_size", 60)
-	label.add_theme_color_override("font_color", UiPalette.ACCENT)
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.size = Vector2(screen.x, 80.0)
+	player_count_label = Label.new()
+	player_count_label.text = "How many players?"
+	player_count_label.theme = UI_THEME
+	player_count_label.add_theme_font_size_override("font_size", 60)
+	player_count_label.add_theme_color_override("font_color", UiPalette.ACCENT)
+	player_count_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	player_count_label.size = Vector2(screen.x, 80.0)
 	# High enough that a hovered card's lifted top corner stays clear of it.
-	label.position = Vector2(0.0, screen.y - 640.0)
-	label.modulate.a = 0.0
-	add_child(label)
+	player_count_label.position = Vector2(0.0, screen.y - 640.0)
+	player_count_label.modulate.a = 0.0
+	add_child(player_count_label)
 
 	var fade_tween := create_tween()
-	fade_tween.tween_property(label, "modulate:a", 1.0, 0.3)
+	fade_tween.tween_property(player_count_label, "modulate:a", 1.0, 0.3)
+
+
+func hide_player_count_label() -> void:
+	if player_count_label == null:
+		return
+
+	var label := player_count_label
+	player_count_label = null
+	var fade_tween := create_tween()
+	fade_tween.tween_property(label, "modulate:a", 0.0, 0.2)
+	fade_tween.tween_callback(label.queue_free)
 
 
 func start_game_with_card(card: PlayerCard, player_count: int) -> void:
