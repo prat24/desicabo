@@ -160,8 +160,9 @@ func build_hosting_screen() -> void:
 	layout.add_child(make_label(
 		"Waiting for players… %d of %d" % [Net.joined_count(), player_count],
 		40, HORIZONTAL_ALIGNMENT_CENTER))
+	var others := "the other phone" if player_count == 2 else "each other phone"
 	layout.add_child(make_label(
-		"On the other phone, tap Online → %d → Join a Game." % player_count,
+		"On %s, tap Online → %d → Join a Game." % [others, player_count],
 		30, HORIZONTAL_ALIGNMENT_CENTER))
 	layout.add_child(make_label("This device: %s" % local_address_text(), 28, HORIZONTAL_ALIGNMENT_CENTER))
 	layout.add_child(make_spacer(20.0))

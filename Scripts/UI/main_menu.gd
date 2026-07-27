@@ -5,8 +5,8 @@
 ## bottom: Local / Online / Settings. Each pick slides that hand away and deals
 ## the next question as another hand — Local asks who you are playing against
 ## (Ace for friends, Queen for bots) and then how many players; Online asks the
-## count and opens the host-or-join card. Bots and Online are two players for
-## now, so their 3 and 4 are dealt out greyed.
+## count and opens the host-or-join card. Bots are two players for now, so their
+## 3 and 4 are dealt out greyed.
 extends Control
 
 const GAME_SCENE_PATH := "res://Scenes/Managers/game_manager.tscn"
@@ -59,9 +59,8 @@ const PLAYER_COUNT_HAND := [
 	{"id": "3", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts3.png"), "enabled": true},
 	{"id": "4", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts4.png"), "enabled": true},
 ]
-## The same hand where only two players are wired up so far — online, and
-## against bots.
-const TWO_PLAYER_HAND := [
+## Bots are two players for now, so the other two are dealt out greyed.
+const BOT_PLAYER_COUNT_HAND := [
 	{"id": "2", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts2.png"), "enabled": true},
 	{"id": "3", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts3.png"), "enabled": false},
 	{"id": "4", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts4.png"), "enabled": false},
@@ -329,13 +328,13 @@ func handle_card_pressed(card: PlayerCard) -> void:
 		"online":
 			choosing_online = true
 			GameConfig.vs_bots = false
-			await deal_menu_hand(MenuScreen.COUNT, TWO_PLAYER_HAND, COUNT_QUESTION, card)
+			await deal_menu_hand(MenuScreen.COUNT, PLAYER_COUNT_HAND, COUNT_QUESTION, card)
 		"friends":
 			GameConfig.vs_bots = false
 			await deal_menu_hand(MenuScreen.COUNT, PLAYER_COUNT_HAND, COUNT_QUESTION, card)
 		"bots":
 			GameConfig.vs_bots = true
-			await deal_menu_hand(MenuScreen.COUNT, TWO_PLAYER_HAND, COUNT_QUESTION, card)
+			await deal_menu_hand(MenuScreen.COUNT, BOT_PLAYER_COUNT_HAND, COUNT_QUESTION, card)
 		"settings":
 			open_settings(card)
 		"2", "3", "4":

@@ -83,6 +83,9 @@ const DRAW_CARD_TURN_OFFSET = 160.0
 ## from the middle of the board, in the gap before that player's own hand.
 const TURN_WAIT_LABEL_HEIGHT = 80.0
 const TURN_WAIT_LABEL_BAND = 300.0
+## Where that note stands for the seats along the right edge: clear of the
+## board column on its left and of their own hands on its right.
+const TURN_WAIT_LABEL_SIDE_X = 500.0
 ## How often the active player's device sends the card it is dragging to the
 ## others — often enough to look live, rarely enough to be nothing on a LAN.
 const NET_DRAG_INTERVAL = 0.05
@@ -187,6 +190,8 @@ var seven_choice: Array[int] = []
 var seven_skipped := false
 ## True only while the host is waiting for those picks.
 var awaiting_seven := false
+## True only while the host is waiting for a power's target to be chosen.
+var awaiting_choice := false
 ## Throttles the drag position the active player streams to the other devices.
 var net_drag_timer := 0.0
 ## Standing "Player N's turn…" note shown to the players who are not up.
@@ -364,6 +369,12 @@ func has_own_seat() -> bool:
 ## always belongs to the active player.
 func is_my_turn() -> bool:
 	return not has_own_seat() or current_player == my_seat
+
+
+## Who a prompt should be turned toward: this device's own player when the
+## screen belongs to one, and whoever is acting when it is being passed around.
+func prompt_facing_player() -> int:
+	return my_seat if has_own_seat() else current_player
 
 
 ## Whether the computer is playing this turn.
@@ -1319,6 +1330,12 @@ func update_turn_wait_label() -> void:
 ## either the drawn card or anybody's cards.
 func turn_wait_label_position() -> Vector2:
 	var middle: float = screen_size.y * 0.5
+
+	# Seats 3 and 4 read the board sideways, so their note is turned a quarter
+	# turn and stands in the gap between the board column and their own hands.
+	# Rotating about its own centre leaves it an upright strip there.
+	if my_seat >= 3:
+		return Vector2(TURN_WAIT_LABEL_SIDE_X - screen_size.x * 0.5, middle - TURN_WAIT_LABEL_HEIGHT * 0.5)
 	if my_seat == 2:
 		return Vector2(0.0, middle - TURN_WAIT_LABEL_BAND - TURN_WAIT_LABEL_HEIGHT)
 	return Vector2(0.0, middle + TURN_WAIT_LABEL_BAND)
@@ -1363,12 +1380,12 @@ func check_special_card_effect() -> void:
 
 		"K":
 			var reveal_player := await pick_power_target("Choose a player whose\ncards you wish to see")
-			remove_special_overlay()
+			await step("step_clear_special_overlay")
 			await reveal_hand_to(reveal_player, current_player)
 
 		"J":
 			var jumble_player := await pick_power_target("Choose a player whose\ncards you wish to jumble")
-			remove_special_overlay()
+			await step("step_clear_special_overlay")
 			if bots:
 				bots.observe_jumble(jumble_player)
 			await step("step_jumble_hand", [jumble_player, shuffled_order(get_hand(jumble_player).cards.size())])
@@ -1429,13 +1446,30 @@ func pick_power_target(choose_prompt_text: String) -> int:
 	return await choose_target_player(choose_prompt_text)
 
 
-## Prompt the active player, then light up both opponent hands and wait for a
+## Prompt the active player, then light up every opponent hand and wait for a
 ## tap on one of them. Leaves the dim overlay up for the power that follows.
+##
+## The other devices put the same overlay up and watch: they can see a choice is
+## being made and which hands are in play, they just cannot make it.
 func choose_target_player(choose_prompt_text: String) -> int:
 	chosen_target_player = 0
+	awaiting_choice = true
+
+	await step("step_begin_choose", [current_player, choose_prompt_text])
+
+	if not await wait_until(func() -> bool: return chosen_target_player != 0):
+		return 0
+	awaiting_choice = false
+
+	await step("step_end_choose")
+	return chosen_target_player
+
+
+func step_begin_choose(chooser: int, choose_prompt_text: String) -> void:
 	hovered_special_card = null
 
-	await show_fullscreen_prompt(choose_prompt_text, turn_prompt_time, 0.15, current_player, UiPalette.ACCENT)
+	var prompt_text := choose_prompt_text if is_my_turn() else "Player %d is choosing…" % chooser
+	await show_fullscreen_prompt(prompt_text, turn_prompt_time, 0.15, prompt_facing_player(), UiPalette.ACCENT)
 
 	# Same layering as the seven power: board cards dim under the overlay,
 	# selectable hands are raised above it.
@@ -1443,23 +1477,28 @@ func choose_target_player(choose_prompt_text: String) -> int:
 	discard_top_card.z_index = 5
 	create_special_overlay()
 	for hand in get_all_hands():
-		var selectable := hand != get_active_hand()
+		var selectable := hand != get_hand(chooser)
 		set_hand_enabled(hand, selectable)
 		hand.z_index = RAISED_HAND_Z_INDEX if selectable else 0
 
-	turn_state = TurnState.CHOOSING_PLAYER
-	if not await wait_until(func() -> bool: return chosen_target_player != 0):
-		return 0
-	turn_state = TurnState.DEALING
+	turn_state = TurnState.CHOOSING_PLAYER if is_my_turn() else TurnState.ANIMATING
 
+
+## The seven keeps the dim overlay for the power that follows; a King or a Jack
+## is finished with it, and every device has one up now that the choosing is
+## shown to the whole table.
+func step_clear_special_overlay() -> void:
+	remove_special_overlay()
+
+
+func step_end_choose() -> void:
+	turn_state = TurnState.DEALING
 	if hovered_special_card:
 		hovered_special_card.set_drag_hovered(false)
 		hovered_special_card = null
 	for hand in get_all_hands():
 		set_hand_enabled(hand, true)
 		hand.z_index = 0
-
-	return chosen_target_player
 
 
 ## The card under `point` in any opponent hand (CHOOSING_PLAYER state).
@@ -1492,10 +1531,28 @@ func update_choose_hover() -> void:
 		hovered_special_card.set_drag_hovered(true)
 
 
+## The chooser's device only reports which hand was tapped; the host is what
+## turns that into the power's target.
 func handle_choose_click() -> void:
 	var clicked_card := get_opponent_card_at(get_global_mouse_position())
-	if clicked_card:
+	if clicked_card == null:
+		return
+
+	turn_state = TurnState.ANIMATING
+	if is_host():
 		chosen_target_player = clicked_card.player_id
+	else:
+		rpc_id(1, "net_request_choice", clicked_card.player_id)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func net_request_choice(target_player: int) -> void:
+	if not is_host() or not awaiting_choice or not is_request_from_active_player():
+		return
+	if target_player < 1 or target_player > player_count or target_player == current_player:
+		return
+
+	chosen_target_player = target_player
 
 
 func deal_center_draw_card() -> void:

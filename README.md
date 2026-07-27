@@ -7,7 +7,7 @@ Lowest total when the deck runs out wins.
 Three ways to play, all from the same game code:
 
 - **Local** — one phone passed around the table, 2 to 4 players
-- **Online** — one phone hosts over Wi-Fi and the others join it, 2 players
+- **Online** — one phone hosts over Wi-Fi and the others join it, 2 to 4 players
 - **Bots** — one player against the computer, 2 players
 
 No servers, no accounts, no analytics, no third-party libraries.
