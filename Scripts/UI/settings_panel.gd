@@ -129,8 +129,13 @@ func format_percent(value: float) -> String:
 
 
 ## Difficulty reads as a word, not a number — what the slider moves is how well
-## the bots remember their cards, and no percentage says that.
+## the bots remember their cards, and no percentage says that. The two ends are
+## named for the ends themselves, not for the band leading up to them.
 func format_difficulty(value: float) -> String:
+	if value <= 0.0:
+		return "Dumbass"
+	if value >= 1.0:
+		return "James Bond"
 	if value < 0.2:
 		return "Forgetful"
 	if value < 0.45:

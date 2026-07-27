@@ -1631,6 +1631,7 @@ func swap_draw_card_into_slot(slot: int) -> void:
 	if bots:
 		bots.observe_slot_filled(current_player, slot, get_card_value(current_draw["rank"]), false)
 		bots.observe_discard(get_card_value(replaced["rank"]))
+		bots.observe_replacement(current_player, slot, get_card_value(replaced["rank"]))
 	advance_to_next_player()
 	await start_turn()
 
@@ -1718,6 +1719,7 @@ func take_discard_into_slot(slot: int) -> void:
 		bots.observe_slot_filled(current_player, slot, get_card_value(taken["rank"]), true)
 		bots.observe_discard(get_card_value(current_draw["rank"]))
 		bots.observe_discard(get_card_value(replaced["rank"]))
+		bots.observe_replacement(current_player, slot, get_card_value(replaced["rank"]))
 	advance_to_next_player()
 	await start_turn()
 

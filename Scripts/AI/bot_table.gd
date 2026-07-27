@@ -61,6 +61,14 @@ func observe_slot_filled(player: int, slot: int, rank: int, public: bool) -> voi
 			bots[seat].belief.forget(player, slot)
 
 
+## Somebody swapped a card into a slot and threw one away, where the whole table
+## could see it. Everyone gets to reason about what that says — about the card
+## that went in, and about the rest of that hand.
+func observe_replacement(player: int, slot: int, discarded_rank: int) -> void:
+	for seat: int in bots:
+		bots[seat].belief.note_replacement(player, slot, discarded_rank)
+
+
 ## A King: only the player who drew it gets to look.
 func observe_peek(viewer: int, target: int, ranks: Array) -> void:
 	if not bots.has(viewer):
