@@ -67,8 +67,9 @@ func build_panel() -> void:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	layout.add_child(title)
 
-	layout.add_child(make_volume_row("Music", AudioSettings.music_volume, AudioSettings.set_music_volume))
-	layout.add_child(make_volume_row("Sound Effects", AudioSettings.sfx_volume, AudioSettings.set_sfx_volume))
+	layout.add_child(make_slider_row("Music", AudioSettings.music_volume, AudioSettings.set_music_volume, format_percent))
+	layout.add_child(make_slider_row("Sound Effects", AudioSettings.sfx_volume, AudioSettings.set_sfx_volume, format_percent))
+	layout.add_child(make_slider_row("Bot Difficulty", GameSettings.bot_difficulty, GameSettings.set_bot_difficulty, format_difficulty))
 
 
 ## Close the card around whatever it holds, with the same padding all round.
@@ -98,8 +99,9 @@ func make_label(text: String, font_size: int) -> Label:
 	return label
 
 
-## One labelled slider row; the percentage readout tracks the slider live.
-func make_volume_row(row_name: String, value: float, apply_volume: Callable) -> VBoxContainer:
+## One labelled slider row. `describe` turns the 0..1 value into the readout
+## beside the name, which tracks the slider live.
+func make_slider_row(row_name: String, value: float, apply_value: Callable, describe: Callable) -> VBoxContainer:
 	var row := VBoxContainer.new()
 	row.add_theme_constant_override("separation", 16)
 
@@ -108,14 +110,14 @@ func make_volume_row(row_name: String, value: float, apply_volume: Callable) -> 
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(name_label)
 
-	var value_label := make_label(format_percent(value), 40)
+	var value_label := make_label(describe.call(value), 40)
 	header.add_child(value_label)
 	row.add_child(header)
 
 	var slider := make_slider(value)
 	slider.value_changed.connect(func(new_value: float) -> void:
-		apply_volume.call(new_value)
-		value_label.text = format_percent(new_value)
+		apply_value.call(new_value)
+		value_label.text = describe.call(new_value)
 	)
 	row.add_child(slider)
 
@@ -124,6 +126,20 @@ func make_volume_row(row_name: String, value: float, apply_volume: Callable) -> 
 
 func format_percent(value: float) -> String:
 	return "%d%%" % roundi(value * 100.0)
+
+
+## Difficulty reads as a word, not a number — what the slider moves is how well
+## the bots remember their cards, and no percentage says that.
+func format_difficulty(value: float) -> String:
+	if value < 0.2:
+		return "Forgetful"
+	if value < 0.45:
+		return "Casual"
+	if value < 0.7:
+		return "Sharp"
+	if value < 0.9:
+		return "Ruthless"
+	return "Card Counter"
 
 
 func make_slider(value: float) -> HSlider:
@@ -199,6 +215,7 @@ func close() -> void:
 	is_closing = true
 
 	AudioSettings.save_settings()
+	GameSettings.save_settings()
 
 	if slide_tween:
 		slide_tween.kill()

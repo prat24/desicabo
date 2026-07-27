@@ -63,6 +63,9 @@ func load_settings() -> void:
 ## Called when the settings panel closes, rather than on every slider step.
 func save_settings() -> void:
 	var config := ConfigFile.new()
+	# GameSettings keeps its own section of the same file, so it is read back in
+	# rather than being written over.
+	config.load(CONFIG_PATH)
 	config.set_value(CONFIG_SECTION, "music_volume", music_volume)
 	config.set_value(CONFIG_SECTION, "sfx_volume", sfx_volume)
 	config.save(CONFIG_PATH)

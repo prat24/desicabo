@@ -2,10 +2,11 @@
 ## starts invisible; card backs are thrown down beneath the text layer to
 ## reveal it. The title then swells, snaps back with a boom, turns white, and
 ## blasts the pile away. Finally a fanned hand of card buttons rises from the
-## bottom: Local / Online / Settings. Picking Local or Online slides that hand
-## away and deals a second hand asking how many players (2 / 3 / 4); Online
-## then opens the host-or-join card. Online is two players for now, so its 3
-## and 4 are dealt out greyed.
+## bottom: Local / Online / Settings. Each pick slides that hand away and deals
+## the next question as another hand — Local asks who you are playing against
+## (Ace for friends, Queen for bots) and then how many players; Online asks the
+## count and opens the host-or-join card. Bots and Online are two players for
+## now, so their 3 and 4 are dealt out greyed.
 extends Control
 
 const GAME_SCENE_PATH := "res://Scenes/Managers/game_manager.tscn"
@@ -58,12 +59,22 @@ const PLAYER_COUNT_HAND := [
 	{"id": "3", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts3.png"), "enabled": true},
 	{"id": "4", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts4.png"), "enabled": true},
 ]
-## Same hand for an online game, where only two players are wired up so far.
-const ONLINE_PLAYER_COUNT_HAND := [
+## The same hand where only two players are wired up so far — online, and
+## against bots.
+const TWO_PLAYER_HAND := [
 	{"id": "2", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts2.png"), "enabled": true},
 	{"id": "3", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts3.png"), "enabled": false},
 	{"id": "4", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts4.png"), "enabled": false},
 ]
+## Who a local game is against, asked before the player count so the count hand
+## can grey out what the answer rules out — bots are two-player for now.
+const OPPONENT_HAND := [
+	{"id": "friends", "texture": preload("res://Assets/Art/PNG/TitleCards/Friends.png"), "enabled": true},
+	{"id": "bots", "texture": preload("res://Assets/Art/PNG/TitleCards/bots.png"), "enabled": true},
+]
+const OPPONENT_QUESTION := "Who would you like to play against?"
+const COUNT_QUESTION := "How many players?"
+
 ## Matches a two-player game hand, so the menu cards and the cards the player
 ## picks up a moment later are the same size.
 const HAND_CARD_SCALE := 1.4
@@ -82,6 +93,10 @@ const HAND_SLIDE_OUT_TIME := 0.3
 ## Far enough below the screen edge that the whole card clears it.
 const HAND_SLIDE_OUT_DISTANCE := 800.0
 const DISABLED_CARD_MODULATE := Color(0.45, 0.45, 0.45)
+
+## Which hand is on the table. Local goes MAIN to OPPONENT to COUNT; Online
+## skips the middle one, which is all Back needs to know to walk it back.
+enum MenuScreen { MAIN, OPPONENT, COUNT }
 
 # ── Scene transitions ─────────────────────────────────────────────────────────
 const FADE_OVERLAY_Z := 500
@@ -103,6 +118,7 @@ var hovered_card: PlayerCard
 ## Card buttons act on release, not press: on a phone, holding a finger on a
 ## card is how the player hovers it.
 var pointer := TapGesture.new()
+var menu_screen: MenuScreen = MenuScreen.MAIN
 var title_rest_position: Vector2
 var input_enabled := false
 var is_starting_game := false
@@ -112,7 +128,7 @@ var online_panel: OnlinePanel
 ## Corner button out of the player count hand, back to Local / Online / Settings.
 var back_button: Button
 ## Kept so going back can take the question away with the hand it belongs to.
-var player_count_label: Label
+var menu_question_label: Label
 
 
 func _ready() -> void:
@@ -309,10 +325,17 @@ func handle_card_pressed(card: PlayerCard) -> void:
 	match card.rank:
 		"local":
 			choosing_online = false
-			show_player_count_picker(card, PLAYER_COUNT_HAND)
+			await deal_menu_hand(MenuScreen.OPPONENT, OPPONENT_HAND, OPPONENT_QUESTION, card)
 		"online":
 			choosing_online = true
-			show_player_count_picker(card, ONLINE_PLAYER_COUNT_HAND)
+			GameConfig.vs_bots = false
+			await deal_menu_hand(MenuScreen.COUNT, TWO_PLAYER_HAND, COUNT_QUESTION, card)
+		"friends":
+			GameConfig.vs_bots = false
+			await deal_menu_hand(MenuScreen.COUNT, PLAYER_COUNT_HAND, COUNT_QUESTION, card)
+		"bots":
+			GameConfig.vs_bots = true
+			await deal_menu_hand(MenuScreen.COUNT, TWO_PLAYER_HAND, COUNT_QUESTION, card)
 		"settings":
 			open_settings(card)
 		"2", "3", "4":
@@ -488,32 +511,41 @@ func build_back_button() -> void:
 	add_child(back_button)
 
 
-## Put the player count hand away and deal the first hand again.
+## One step back up the menu. Online skips the opponent question, so it goes
+## straight home from the player count.
 func on_back_pressed() -> void:
 	if not input_enabled or is_starting_game:
 		return
 
-	input_enabled = false
-	back_button.visible = false
+	play_place_sound()
+	if menu_screen == MenuScreen.COUNT and not choosing_online:
+		await deal_menu_hand(MenuScreen.OPPONENT, OPPONENT_HAND, OPPONENT_QUESTION)
+		return
+
 	choosing_online = false
-	play_place_sound()
-
-	await slide_out_hand_cards()
-	hide_player_count_label()
-	await fly_in_hand_cards(MAIN_HAND)
-	input_enabled = true
+	await deal_menu_hand(MenuScreen.MAIN, MAIN_HAND, "")
 
 
-func show_player_count_picker(pressed_card: PlayerCard, count_hand: Array) -> void:
+## Swap the hand on the table for the next one, with the question that goes
+## above it. Every move between menu screens goes through here, forwards or
+## back, so they all look the same.
+func deal_menu_hand(screen: MenuScreen, entries: Array, question: String, pressed_card: PlayerCard = null) -> void:
 	input_enabled = false
-	pressed_card.set_drag_hovered(true)
-	play_place_sound()
-	await get_tree().create_timer(0.15).timeout
+
+	# Let the pressed card lift and land before its hand slides away.
+	if pressed_card:
+		pressed_card.set_drag_hovered(true)
+		play_place_sound()
+		await get_tree().create_timer(0.15).timeout
 
 	await slide_out_hand_cards()
-	show_player_count_label()
-	await fly_in_hand_cards(count_hand)
-	back_button.visible = true
+	hide_menu_question()
+	if not question.is_empty():
+		show_menu_question(question)
+	await fly_in_hand_cards(entries)
+
+	menu_screen = screen
+	back_button.visible = screen != MenuScreen.MAIN
 	input_enabled = true
 
 
@@ -556,30 +588,32 @@ func on_online_game_starting() -> void:
 	get_tree().change_scene_to_file(GAME_SCENE_PATH)
 
 
-func show_player_count_label() -> void:
+## The line above the hand on the table, asking whatever that hand answers.
+func show_menu_question(question: String) -> void:
 	var screen: Vector2 = get_viewport_rect().size
-	player_count_label = Label.new()
-	player_count_label.text = "How many players?"
-	player_count_label.theme = UI_THEME
-	player_count_label.add_theme_font_size_override("font_size", 60)
-	player_count_label.add_theme_color_override("font_color", UiPalette.ACCENT)
-	player_count_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	player_count_label.size = Vector2(screen.x, 80.0)
+	menu_question_label = Label.new()
+	menu_question_label.text = question
+	menu_question_label.theme = UI_THEME
+	menu_question_label.add_theme_font_size_override("font_size", 60)
+	menu_question_label.add_theme_color_override("font_color", UiPalette.ACCENT)
+	menu_question_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	menu_question_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	menu_question_label.size = Vector2(screen.x, 80.0)
 	# High enough that a hovered card's lifted top corner stays clear of it.
-	player_count_label.position = Vector2(0.0, screen.y - 640.0)
-	player_count_label.modulate.a = 0.0
-	add_child(player_count_label)
+	menu_question_label.position = Vector2(0.0, screen.y - 640.0)
+	menu_question_label.modulate.a = 0.0
+	add_child(menu_question_label)
 
 	var fade_tween := create_tween()
-	fade_tween.tween_property(player_count_label, "modulate:a", 1.0, 0.3)
+	fade_tween.tween_property(menu_question_label, "modulate:a", 1.0, 0.3)
 
 
-func hide_player_count_label() -> void:
-	if player_count_label == null:
+func hide_menu_question() -> void:
+	if menu_question_label == null:
 		return
 
-	var label := player_count_label
-	player_count_label = null
+	var label := menu_question_label
+	menu_question_label = null
 	var fade_tween := create_tween()
 	fade_tween.tween_property(label, "modulate:a", 0.0, 0.2)
 	fade_tween.tween_callback(label.queue_free)

@@ -8,6 +8,9 @@
 ## board itself is identical everywhere (Player 2 turns their phone upside
 ## down, Player 3 turns theirs sideways), so a step is just player numbers,
 ## slot numbers, and card ranks. See step(), private_step() and personal_step().
+##
+## Named so the bots can speak the same move vocabulary — see [CardBot].
+class_name GameManager
 extends Node2D
 
 const CARD_COLLISION_MASK = 1
@@ -88,6 +91,9 @@ const NET_DRAG_INTERVAL = 0.05
 ## goes above everything, since it is opened on top of whatever is happening.
 const MENU_BUTTON_Z = 300
 const MENU_PANEL_Z = 600
+## How long a bot sits on its decision. Nothing to do with how long it takes to
+## make it — a move that lands the instant the card is dealt cannot be read.
+const BOT_THINK_TIME = 0.7
 ## The black that covers everything while the board is swapped or re-dealt.
 const SCENE_FADE_Z = 500
 const SCENE_FADE_TIME = 0.35
@@ -158,9 +164,12 @@ var game_menu_panel: GameMenuPanel
 ## Set from Net at load. False puts every path below back on its local
 ## behaviour, so the hotseat game is unchanged.
 var online := false
-## Which player this device is, 1..player_count. 0 in a hotseat game, where the
-## one screen belongs to whoever's turn it is.
+## Which player this screen belongs to, 1..player_count — over the network, or
+## against bots. 0 means a hotseat game, where the one screen is passed around
+## and belongs to whoever's turn it is.
 var my_seat := 0
+## The computer players, or null in a game between people.
+var bots: BotTable
 ## Steps arrive faster than they animate, so they wait their turn here instead
 ## of playing on top of each other.
 var net_step_queue: Array = []
@@ -212,8 +221,15 @@ var sfx_slide: AudioStreamPlayer
 
 func _ready() -> void:
 	online = Net.is_online
-	my_seat = Net.local_player if online else 0
 	player_count = clampi(GameConfig.player_count, 2, 4)
+	# Online the seat comes from the lobby; against bots the player is always
+	# seat 1. Either way the screen belongs to one player, and everything that
+	# hides a card keys off that rather than off the network.
+	if online:
+		my_seat = Net.local_player
+	elif GameConfig.vs_bots:
+		my_seat = 1
+		bots = BotTable.new(player_count, my_seat, player1_hand.cards.size(), GameSettings.bot_difficulty)
 	screen_size = get_viewport_rect().size
 	layout_board_for_screen()
 	center_draw_position = center_draw_card.global_position
@@ -271,7 +287,7 @@ func open_game_menu() -> void:
 	game_menu_panel.screen = screen_size
 	# Turned toward whoever opened it: their own seat online, and in a hotseat
 	# game the player holding the phone, which is the one whose turn it is.
-	game_menu_panel.facing_degrees = facing_rotation_degrees(my_seat if online else current_player)
+	game_menu_panel.facing_degrees = facing_rotation_degrees(my_seat if has_own_seat() else current_player)
 	game_menu_panel.z_index = MENU_PANEL_Z
 	game_menu_panel.restart_requested.connect(on_restart_requested)
 	game_menu_panel.quit_requested.connect(on_quit_requested)
@@ -337,10 +353,94 @@ func is_host() -> bool:
 	return not online or multiplayer.is_server()
 
 
+## Whether this screen belongs to one player — over the network or against
+## bots — rather than being passed around a table. Everything that keeps a card
+## hidden keys off this, so the online view and the bot view are the same view.
+func has_own_seat() -> bool:
+	return my_seat > 0
+
+
 ## Whether this device may act right now. The one screen of a hotseat game
 ## always belongs to the active player.
 func is_my_turn() -> bool:
-	return not online or current_player == my_seat
+	return not has_own_seat() or current_player == my_seat
+
+
+## Whether the computer is playing this turn.
+func is_bot_turn() -> bool:
+	return bots != null and bots.has_bot(current_player)
+
+
+# ── Waiting ───────────────────────────────────────────────────────────────────
+#
+# Leaving the board mid-turn — quitting to the menu, or restarting — frees this
+# node while the turn is still part-way through an await. Both helpers below
+# exist so that whatever was waiting stops instead of coming back to a board
+# that is no longer there.
+
+## Spin until `is_done` says so, and report false if the board went away first.
+## get_tree() is null the moment this node leaves the tree, so a loop that keeps
+## awaiting on it takes the game down with it.
+func wait_until(is_done: Callable) -> bool:
+	while not is_done.call():
+		if is_leaving_scene or not is_inside_tree():
+			return false
+		await get_tree().process_frame
+	return true
+
+
+## A pause that dies with this node. A scene-tree timer keeps ticking after the
+## board is gone and would resume into freed nodes; a tween belongs to the node
+## that made it, so leaving simply cancels the wait.
+func pause(seconds: float) -> void:
+	if seconds <= 0.0:
+		return
+	var wait := create_tween()
+	wait.tween_interval(seconds)
+	await wait.finished
+
+
+# ── Bots ──────────────────────────────────────────────────────────────────────
+
+## The computer's turn. It pauses first, which is not for the bot's benefit —
+## a move that lands the instant the card is dealt is unreadable. Then it goes
+## through the same perform_move() a dropped card does, so a move plays out
+## identically however it was chosen.
+func take_bot_turn() -> void:
+	await pause(BOT_THINK_TIME)
+	if is_leaving_scene or not is_inside_tree():
+		return
+
+	var choice: Dictionary = bots.bot(current_player).choose_move(
+		get_card_value(current_draw["rank"]),
+		takeable_discard_value()
+	)
+	await perform_move(choice["move"], int(choice["slot"]))
+
+
+## What the pile's top card is worth to a player who could take it, or 0 when
+## there is nothing there to take.
+func takeable_discard_value() -> int:
+	return get_card_value(discard_top_card.rank) if discard_top_card.visible else 0
+
+
+## Everyone looks at their own hand at the start, bots included.
+func remember_opening_peek() -> void:
+	if bots == null:
+		return
+
+	var ranks_by_player: Dictionary = {}
+	for player in range(1, player_count + 1):
+		ranks_by_player[player] = hand_values(player)
+	bots.observe_opening_peek(ranks_by_player)
+
+
+## A hand as the bots read it: rank names turned into the numbers they score.
+func hand_values(player: int) -> Array:
+	var values: Array = []
+	for rank: String in hand_ranks(player):
+		values.append(get_card_value(rank))
+	return values
 
 
 ## The host may still be loading its own board, and an RPC that lands before
@@ -349,12 +449,11 @@ func is_my_turn() -> bool:
 func report_ready_to_host() -> void:
 	while not handshake_done:
 		rpc_id(1, "net_player_ready")
-		await get_tree().create_timer(0.25).timeout
+		await pause(0.25)
 
 
 func wait_for_players() -> void:
-	while ready_peers.size() < player_count - 1:
-		await get_tree().process_frame
+	await wait_until(func() -> bool: return ready_peers.size() >= player_count - 1)
 
 
 @rpc("any_peer", "call_remote", "reliable")
@@ -641,20 +740,21 @@ func step_deal_card(player: int, slot: int, rank: String, suit: String) -> void:
 		deck_sprite.rotation_degrees
 	)
 	play_place_sound()
-	if initial_deal_stagger > 0.0:
-		await get_tree().create_timer(initial_deal_stagger).timeout
+	await pause(initial_deal_stagger)
 
 
 ## Every player peeks at their hand before Player 1's first turn; a prompt
-## before each reveal warns the other player(s) to look away. Online there is
-## nobody to look away — each player has their own screen — so all the peeks
-## happen at once, each phone turning up its own player's hand.
+## before each reveal warns the other player(s) to look away. When the screen
+## belongs to one player there is nobody to look away — the others are on their
+## own phones, or are the computer — so the peeks all happen at once and this
+## screen turns up only its own hand.
 func run_pre_game_reveals() -> void:
-	if online:
+	if has_own_seat():
 		await step("step_prompt_everyone", ["Memorise your cards!", turn_prompt_time, 0.25])
 		await personal_step("step_reveal_hand", func(seat: int) -> Array:
 			return [seat, hand_ranks(seat), hand_suits(seat)]
 		)
+		remember_opening_peek()
 		return
 
 	for player in range(1, player_count + 1):
@@ -703,6 +803,12 @@ func show_reveal_prompt(player_number: int) -> void:
 
 
 func show_turn_prompt() -> void:
+	# Against bots nobody has to hide anything — one person is at the phone and
+	# the rest are the computer — so the prompt only names whose turn it is.
+	if bots:
+		await show_fullscreen_prompt("Player %d's turn" % current_player, turn_prompt_time, 0.15, my_seat)
+		return
+
 	if online:
 		# Nobody hands the phone over, so the prompt says whether the turn is
 		# yours; the players who are waiting then keep a standing note of whose
@@ -781,7 +887,9 @@ func show_fullscreen_prompt(prompt_text: String, hold_time: float, fade_time: fl
 	fade_in.tween_property(overlay, "modulate:a", 1.0, fade_time)
 	await fade_in.finished
 
-	await get_tree().create_timer(hold_time).timeout
+	await pause(hold_time)
+	if not is_inside_tree():
+		return
 
 	var fade_out := create_tween()
 	fade_out.tween_property(overlay, "modulate:a", 0.0, fade_time)
@@ -801,19 +909,18 @@ func run_hand_reveal(hand: PlayerHand, show_faces := true) -> void:
 		for card in hand.cards:
 			await card.animate_flip(true, quick_flip_up_time)
 	else:
-		await get_tree().create_timer(card_count * quick_flip_up_time).timeout
+		await pause(card_count * quick_flip_up_time)
 
 	var flip_time_total: float = card_count * (quick_flip_up_time + player_card_flip_time)
 	var hold_time: float = maxf(0.0, pre_game_reveal_time - flip_time_total)
 
-	if hold_time > 0.0:
-		await get_tree().create_timer(hold_time).timeout
+	await pause(hold_time)
 
 	if show_faces:
 		for card in hand.cards:
 			await card.animate_flip(false, player_card_flip_time)
 	else:
-		await get_tree().create_timer(card_count * player_card_flip_time).timeout
+		await pause(card_count * player_card_flip_time)
 
 	dim_for_hand_reveal(hand, false)
 	if intro_dim_overlay:
@@ -916,7 +1023,7 @@ func _input(event: InputEvent) -> void:
 
 	# Watching someone else's turn: nothing on this screen is touchable, apart
 	# from the tap that leaves the final scores.
-	if online and not is_my_turn() and turn_state != TurnState.GAME_OVER:
+	if has_own_seat() and not is_my_turn() and turn_state != TurnState.GAME_OVER:
 		return
 
 	# Tracked on every press, even in the states that act on the press itself,
@@ -1153,6 +1260,9 @@ func start_turn() -> void:
 	# finish, so the spotlight has to be re-applied.
 	await step("step_resume_turn")
 
+	if is_bot_turn():
+		await take_bot_turn()
+
 
 func step_begin_turn(player: int) -> void:
 	current_player = player
@@ -1192,7 +1302,7 @@ func update_turn_wait_label() -> void:
 	if turn_wait_label:
 		turn_wait_label.queue_free()
 		turn_wait_label = null
-	if not online or is_my_turn():
+	if not has_own_seat() or is_my_turn():
 		return
 
 	turn_wait_label = make_overlay_label("Player %d's turn…" % current_player, 52)
@@ -1259,6 +1369,8 @@ func check_special_card_effect() -> void:
 		"J":
 			var jumble_player := await pick_power_target("Choose a player whose\ncards you wish to jumble")
 			remove_special_overlay()
+			if bots:
+				bots.observe_jumble(jumble_player)
 			await step("step_jumble_hand", [jumble_player, shuffled_order(get_hand(jumble_player).cards.size())])
 
 		"7":
@@ -1270,8 +1382,10 @@ func check_special_card_effect() -> void:
 ## one player's look at somebody else's cards, and nobody else gets it. The
 ## other devices see the same hand light up with its faces still down.
 func reveal_hand_to(player: int, viewer: int) -> void:
+	if bots:
+		bots.observe_peek(viewer, player, hand_values(player))
 	await personal_step("step_reveal_hand", func(seat: int) -> Array:
-		if not online or seat == viewer:
+		if not has_own_seat() or seat == viewer:
 			return [player, hand_ranks(player), hand_suits(player)]
 		return [player, [], []]
 	)
@@ -1307,6 +1421,11 @@ func shuffled_order(count: int) -> Array:
 func pick_power_target(choose_prompt_text: String) -> int:
 	if player_count == 2:
 		return current_player % player_count + 1
+	if is_bot_turn():
+		return bots.bot(current_player).choose_power_target(
+			String(current_draw["rank"]),
+			get_other_players(current_player)
+		)
 	return await choose_target_player(choose_prompt_text)
 
 
@@ -1329,8 +1448,8 @@ func choose_target_player(choose_prompt_text: String) -> int:
 		hand.z_index = RAISED_HAND_Z_INDEX if selectable else 0
 
 	turn_state = TurnState.CHOOSING_PLAYER
-	while chosen_target_player == 0:
-		await get_tree().process_frame
+	if not await wait_until(func() -> bool: return chosen_target_player != 0):
+		return 0
 	turn_state = TurnState.DEALING
 
 	if hovered_special_card:
@@ -1381,6 +1500,8 @@ func handle_choose_click() -> void:
 
 func deal_center_draw_card() -> void:
 	current_draw = deck.pop_front()
+	if bots:
+		bots.observe_draw(current_player, get_card_value(current_draw["rank"]), is_power_rank(current_draw["rank"]))
 	await personal_step("step_draw_card", func(seat: int) -> Array:
 		if may_see_draw(seat):
 			return [current_draw["rank"], current_draw["suit"]]
@@ -1392,7 +1513,7 @@ func deal_center_draw_card() -> void:
 ## turn it is always does; the rest only when it is a power card, since that
 ## one is about to act on somebody else's hand and the table should know.
 func may_see_draw(seat: int) -> bool:
-	return not online or seat == current_player or is_power_rank(current_draw["rank"])
+	return not has_own_seat() or seat == current_player or is_power_rank(current_draw["rank"])
 
 
 func is_power_rank(rank: String) -> bool:
@@ -1459,6 +1580,8 @@ func get_draw_card_rest_position() -> Vector2:
 func discard_center_draw_card() -> void:
 	# The pile is face up, so throwing a card onto it tells the whole table
 	# what it was, whether or not they were allowed to see it in play.
+	if bots:
+		bots.observe_discard(get_card_value(current_draw["rank"]))
 	await step("step_discard_drawn", [current_draw["rank"], current_draw["suit"]])
 	advance_to_next_player()
 	await start_turn()
@@ -1505,6 +1628,9 @@ func swap_draw_card_into_slot(slot: int) -> void:
 		[current_player, slot, "", "", replaced["rank"], replaced["suit"]],
 		[current_player]
 	)
+	if bots:
+		bots.observe_slot_filled(current_player, slot, get_card_value(current_draw["rank"]), false)
+		bots.observe_discard(get_card_value(replaced["rank"]))
 	advance_to_next_player()
 	await start_turn()
 
@@ -1588,6 +1714,10 @@ func take_discard_into_slot(slot: int) -> void:
 		current_draw["rank"], current_draw["suit"],
 		replaced["rank"], replaced["suit"],
 	])
+	if bots:
+		bots.observe_slot_filled(current_player, slot, get_card_value(taken["rank"]), true)
+		bots.observe_discard(get_card_value(current_draw["rank"]))
+		bots.observe_discard(get_card_value(replaced["rank"]))
 	advance_to_next_player()
 	await start_turn()
 
@@ -1744,11 +1874,21 @@ func run_seven_swap_power(target_player: int) -> void:
 
 	await step("step_begin_seven", [target_player])
 
-	while seven_choice.is_empty() and not seven_skipped:
-		await get_tree().process_frame
+	if is_bot_turn():
+		await pause(BOT_THINK_TIME)
+		var swap: Dictionary = bots.bot(current_player).choose_seven_swap(target_player)
+		if swap.is_empty():
+			seven_skipped = true
+		else:
+			seven_choice = [int(swap["own_slot"]), int(swap["target_slot"])]
+
+	if not await wait_until(func() -> bool: return not seven_choice.is_empty() or seven_skipped):
+		return
 	awaiting_seven = false
 
 	if not seven_skipped:
+		if bots:
+			bots.observe_seven_swap(current_player, seven_choice[0], target_player, seven_choice[1])
 		await step("step_seven_swap", [current_player, seven_choice[0], target_player, seven_choice[1]])
 	await step("step_end_seven")
 
@@ -2014,6 +2154,8 @@ func get_active_hand() -> PlayerHand:
 
 ## Turn order cycles 1 → 2 → (3) → 1.
 func advance_to_next_player() -> void:
+	if bots:
+		bots.observe_turn_passed()
 	current_player = current_player % player_count + 1
 
 
