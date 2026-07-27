@@ -129,13 +129,6 @@ func seat_of(peer_id: int) -> int:
 	return int(seats.get(peer_id, 0))
 
 
-func peer_of_seat(seat: int) -> int:
-	for peer_id: int in seats:
-		if int(seats[peer_id]) == seat:
-			return peer_id
-	return 0
-
-
 ## Every connected peer except this device, as {peer_id: seat}.
 func remote_seats() -> Dictionary:
 	var others: Dictionary = {}

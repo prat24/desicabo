@@ -10,12 +10,18 @@ extends Node2D
 var rank := ""
 var suit := ""
 var front_texture: Texture2D
+## The sprite's own scale, taken once before anything animates it. A flip
+## squashes the live scale to almost nothing and back, so any sizing that needs
+## to divide the sprite's built-in scale out has to use this instead — reading
+## the live value mid-flip asks for a card twenty-six times too big.
+var sprite_rest_scale: Vector2 = Vector2.ONE
 
 @onready var sprite: Sprite2D = $Sprite2D
 @onready var shadow: Sprite2D = $Shadow
 
 
 func _ready() -> void:
+	sprite_rest_scale = sprite.scale
 	CardShader.apply(sprite, randf() * 1000.0)
 	CardShader.set_inset(sprite, CardShader.RESTING_INSET)
 	show_back()
@@ -55,7 +61,7 @@ func animate_flip(to_front: bool, duration: float = 0.24) -> void:
 		return
 
 	var half_duration: float = maxf(0.01, duration * 0.5)
-	var base_scale_x: float = sprite.scale.x
+	var base_scale_x: float = sprite_rest_scale.x
 
 	var flip_tween: Tween = create_tween()
 	flip_tween.set_trans(Tween.TRANS_BACK)

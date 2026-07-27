@@ -75,7 +75,7 @@ func stack_cards_at_deck(deck_global_pos: Vector2, deck_rotation_degrees: float,
 		card.rotation_degrees = _deck_local_rotation(deck_rotation_degrees)
 		# The card's child sprite is pre-scaled, so divide that out to sit at
 		# exactly the deck pile's on-screen size.
-		card.scale = deck_scale / card.sprite.scale.x
+		card.scale = deck_scale / card.sprite_rest_scale.x
 		card.z_index = 0
 
 
@@ -102,7 +102,7 @@ func animate_deal_card(
 	card.rotation_degrees = _deck_local_rotation(deck_rotation_degrees)
 	# The card's child sprite is pre-scaled, so divide that out to spawn at
 	# exactly the deck pile's on-screen size.
-	card.scale = deck_scale / card.sprite.scale.x
+	card.scale = deck_scale / card.sprite_rest_scale.x
 	card.z_index = 100
 
 	var target_global: Vector2 = to_global(card.resting_position)

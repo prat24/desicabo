@@ -5,8 +5,7 @@
 ## bottom: Local / Online / Settings. Each pick slides that hand away and deals
 ## the next question as another hand — Local asks who you are playing against
 ## (Ace for friends, Queen for bots) and then how many players; Online asks the
-## count and opens the host-or-join card. Bots are two players for now, so their
-## 3 and 4 are dealt out greyed.
+## count and opens the host-or-join card.
 extends Control
 
 const GAME_SCENE_PATH := "res://Scenes/Managers/game_manager.tscn"
@@ -59,14 +58,8 @@ const PLAYER_COUNT_HAND := [
 	{"id": "3", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts3.png"), "enabled": true},
 	{"id": "4", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts4.png"), "enabled": true},
 ]
-## Bots are two players for now, so the other two are dealt out greyed.
-const BOT_PLAYER_COUNT_HAND := [
-	{"id": "2", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts2.png"), "enabled": true},
-	{"id": "3", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts3.png"), "enabled": false},
-	{"id": "4", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts4.png"), "enabled": false},
-]
-## Who a local game is against, asked before the player count so the count hand
-## can grey out what the answer rules out — bots are two-player for now.
+## Who a local game is against, asked before the player count: the player takes
+## seat 1 either way, and against bots every other seat is played by one.
 const OPPONENT_HAND := [
 	{"id": "friends", "texture": preload("res://Assets/Art/PNG/TitleCards/Friends.png"), "enabled": true},
 	{"id": "bots", "texture": preload("res://Assets/Art/PNG/TitleCards/bots.png"), "enabled": true},
@@ -334,7 +327,7 @@ func handle_card_pressed(card: PlayerCard) -> void:
 			await deal_menu_hand(MenuScreen.COUNT, PLAYER_COUNT_HAND, COUNT_QUESTION, card)
 		"bots":
 			GameConfig.vs_bots = true
-			await deal_menu_hand(MenuScreen.COUNT, BOT_PLAYER_COUNT_HAND, COUNT_QUESTION, card)
+			await deal_menu_hand(MenuScreen.COUNT, PLAYER_COUNT_HAND, COUNT_QUESTION, card)
 		"settings":
 			open_settings(card)
 		"2", "3", "4":

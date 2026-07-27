@@ -8,7 +8,7 @@ Three ways to play, all from the same game code:
 
 - **Local** — one phone passed around the table, 2 to 4 players
 - **Online** — one phone hosts over Wi-Fi and the others join it, 2 to 4 players
-- **Bots** — one player against the computer, 2 players
+- **Bots** — you against the computer, 2 to 4 players
 
 No servers, no accounts, no analytics, no third-party libraries.
 
@@ -156,6 +156,21 @@ opponents' — is in one of three states:
 The prior is not a guess. The table tracks every card the bot has seen, so an unknown slot is
 worth the average of the cards it has *not* seen. That is card counting, and it sharpens by
 itself as the game goes on.
+
+### Reading the table
+
+Unknown does not mean nothing. When you swap a card in and throw a 5 away, two things follow —
+and the bot uses both:
+
+- the card that went in is probably **lower than 5**, because nobody trades a card for a worse one
+- the slot you picked was probably your worst, so **the rest of your hand is probably ≤ 5 too**
+
+Neither is certain — you might have been replacing a slot you had simply forgotten — so these
+are stored as hints at 75% weight rather than as facts. An unknown slot normally reads ~6.9;
+after watching you discard a 5 it reads ~4.0. Hints clear when the slot changes, travel with
+the card through a 7-swap, are wiped by a jumble, and fade at the same rate as memories, so a
+forgetful bot does not reason like a sharp one. A card the bot actually *saw* always wins over
+a hint.
 
 ### Forgetting
 

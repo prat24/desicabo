@@ -135,7 +135,7 @@ func format_difficulty(value: float) -> String:
 	if value <= 0.0:
 		return "Dumbass"
 	if value >= 1.0:
-		return "James Bond"
+		return "Bot, James Bot"
 	if value < 0.2:
 		return "Forgetful"
 	if value < 0.45:

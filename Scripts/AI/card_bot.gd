@@ -55,7 +55,7 @@ func choose_move(drawn_rank: int, discard_rank: int) -> Dictionary:
 	var worst_value := belief.expected_value(seat, worst_slot)
 
 	if randf() < blunder_chance:
-		return random_move(worst_slot)
+		return random_move()
 
 	# Whichever of the two on offer is lower; the pile only counts when the
 	# game is actually letting it be taken.
@@ -144,7 +144,8 @@ func best_target_value(player: int) -> float:
 	return belief.expected_value(player, best_slot_of(player))
 
 
-func random_move(worst_slot: int) -> Dictionary:
+## A move picked without reference to anything the bot knows.
+func random_move() -> Dictionary:
 	if randf() < 0.5:
 		return {"move": GameManager.Move.DISCARD_DRAWN, "slot": -1}
 	return {"move": GameManager.Move.SWAP_DRAWN, "slot": randi() % belief.slots_per_hand}

@@ -79,13 +79,19 @@ const FOCUSED_DRAW_CARD_Z = 250
 ## How far the drawn card steps away from screen center in 3-player mode so
 ## it never covers the tappable discard pile.
 const DRAW_CARD_TURN_OFFSET = 160.0
-## Online, the note telling a waiting player whose turn it is. It sits this far
-## from the middle of the board, in the gap before that player's own hand.
+## The standing note telling a waiting player whose turn it is.
 const TURN_WAIT_LABEL_HEIGHT = 80.0
-const TURN_WAIT_LABEL_BAND = 300.0
-## Where that note stands for the seats along the right edge: clear of the
-## board column on its left and of their own hands on its right.
-const TURN_WAIT_LABEL_SIDE_X = 500.0
+## How far from the middle of the board the note sits. Far enough that three and
+## four players — who stand the deck and discard in a column reaching 327px
+## either side of the middle — clear the pile rather than printing over it. It
+## may cross another player's hand on the way out; those are dimmed while
+## somebody else is playing, and the pile is not.
+const TURN_WAIT_LABEL_BAND = 380.0
+## Where that note stands for the seats along the right edge, turned sideways.
+## Centred in the one clear channel it has: the board column ends at 440, and
+## the drawn card starts at 525 with three players (the tightest of the two,
+## since its cards are the larger).
+const TURN_WAIT_LABEL_SIDE_X = 482.0
 ## How often the active player's device sends the card it is dragging to the
 ## others — often enough to look live, rarely enough to be nothing on a LAN.
 const NET_DRAG_INTERVAL = 0.05
@@ -94,9 +100,6 @@ const NET_DRAG_INTERVAL = 0.05
 ## goes above everything, since it is opened on top of whatever is happening.
 const MENU_BUTTON_Z = 300
 const MENU_PANEL_Z = 600
-## How long a bot sits on its decision. Nothing to do with how long it takes to
-## make it — a move that lands the instant the card is dealt cannot be read.
-const BOT_THINK_TIME = 0.7
 ## The black that covers everything while the board is swapped or re-dealt.
 const SCENE_FADE_Z = 500
 const SCENE_FADE_TIME = 0.35
@@ -114,6 +117,13 @@ const UI_THEME = preload("res://Assets/Themes/clean_ui.tres")
 @export_range(0.5, 10.0, 0.1) var reveal_prompt_time: float = 5.0
 ## Quick "Player X's turn" flash at the start of every turn.
 @export_range(0.2, 5.0, 0.1) var turn_prompt_time: float = 1.5
+## How long a bot sits on its decision. Nothing to do with how long it takes to
+## make it — a move that lands the instant the card is dealt cannot be read.
+@export_range(0.1, 3.0, 0.05) var bot_think_time: float = 1.0
+## A beat before a bot's turn opens. Without it, one bot's move running straight
+## into the next reads as a single shuffle of cards rather than as turns — which
+## is what four bots in a row felt like.
+@export_range(0.0, 2.0, 0.05) var bot_turn_lead_time: float = 0.45
 
 enum TurnState {
 	DEALING,
@@ -421,7 +431,7 @@ func pause(seconds: float) -> void:
 ## through the same perform_move() a dropped card does, so a move plays out
 ## identically however it was chosen.
 func take_bot_turn() -> void:
-	await pause(BOT_THINK_TIME)
+	await pause(bot_think_time)
 	if is_leaving_scene or not is_inside_tree():
 		return
 
@@ -817,18 +827,13 @@ func show_reveal_prompt(player_number: int) -> void:
 
 
 func show_turn_prompt() -> void:
-	# Against bots nobody has to hide anything — one person is at the phone and
-	# the rest are the computer — so the prompt only names whose turn it is.
-	if bots:
-		await show_fullscreen_prompt("Player %d's turn" % current_player, turn_prompt_time, 0.15, my_seat)
-		return
-
-	if online:
-		# Nobody hands the phone over, so the prompt says whether the turn is
-		# yours; the players who are waiting then keep a standing note of whose
-		# turn it is over the dimmed board (see update_turn_wait_label).
-		var prompt_text := "Your turn!" if is_my_turn() else "Player %d's turn…" % current_player
-		await show_fullscreen_prompt(prompt_text, turn_prompt_time, 0.15, maxi(my_seat, 1))
+	# Only a game round one phone needs this. There the screen is changing hands,
+	# so play has to stop while the last player looks away and the next one picks
+	# it up. When every player has their own screen — online, or against bots —
+	# nothing is being hidden by the handover, and the standing note over the
+	# dimmed board already says whose turn it is for as long as it lasts (see
+	# update_turn_wait_label). A full-screen card on top of that is just a wait.
+	if has_own_seat():
 		return
 
 	if player_count == 2:
@@ -1267,6 +1272,10 @@ func start_turn() -> void:
 		await end_game()
 		return
 
+	# Bots need the gap that a person's own hesitation would otherwise provide.
+	if is_bot_turn():
+		await pause(bot_turn_lead_time)
+
 	await step("step_begin_turn", [current_player])
 	await deal_center_draw_card()
 	await check_special_card_effect()
@@ -1594,7 +1603,7 @@ func step_draw_card(rank: String, suit: String) -> void:
 	center_draw_card.rotation_degrees = deck_sprite.rotation_degrees
 	# The card's child sprite is pre-scaled, so divide that out to spawn at
 	# exactly the deck pile's on-screen size.
-	center_draw_card.scale = deck_sprite.scale / center_draw_card.sprite.scale.x
+	center_draw_card.scale = deck_sprite.scale / center_draw_card.sprite_rest_scale.x
 
 	# In 3-player mode the drawn card turns to face whoever's turn it is. Four
 	# players keep the two upright hands' card upright — it lands beside the
@@ -1937,7 +1946,7 @@ func run_seven_swap_power(target_player: int) -> void:
 	await step("step_begin_seven", [target_player])
 
 	if is_bot_turn():
-		await pause(BOT_THINK_TIME)
+		await pause(bot_think_time)
 		var swap: Dictionary = bots.bot(current_player).choose_seven_swap(target_player)
 		if swap.is_empty():
 			seven_skipped = true
