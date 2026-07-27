@@ -281,7 +281,10 @@ func build_game_menu_button() -> void:
 		OverlayButton.MARGIN
 	)
 	game_menu_button.z_index = MENU_BUTTON_Z
+	game_menu_button.visible = false
 	add_child(game_menu_button)
+	# Drops in with the board rather than being there from the first frame.
+	OverlayButton.set_shown(game_menu_button, true)
 
 
 func open_game_menu() -> void:
@@ -2247,7 +2250,7 @@ func step_end_game(ranks: Array, suits: Array) -> void:
 	center_draw_card.visible = false
 	# The scores are read by tapping anywhere, so the corner button steps out of
 	# the way rather than swallowing the tap that leaves.
-	game_menu_button.visible = false
+	OverlayButton.set_shown(game_menu_button, false)
 
 	for player in range(1, player_count + 1):
 		var hand := get_hand(player)

@@ -10,6 +10,11 @@ const HEIGHT := 92.0
 const CORNER_RADIUS := 26
 ## Distance from the two screen edges it tucks into.
 const MARGIN := 40.0
+## Corner buttons arrive and leave by sliding out of the top edge rather than
+## blinking on and off, which reads as being handed something.
+const SLIDE_TIME := 0.28
+## Where the resting spot is kept, so repeated shows never drift.
+const REST_POSITION_META := "rest_position"
 
 # ── Bars of the menu icon ─────────────────────────────────────────────────────
 const BAR_SIZE := Vector2(40.0, 5.0)
@@ -46,6 +51,38 @@ static func create_menu_icon(on_pressed: Callable) -> Button:
 		button.add_child(bar)
 
 	return button
+
+
+## Show or hide a corner button by sliding it through the top of the screen.
+## The resting spot is wherever it was placed, remembered the first time so a
+## button that comes and goes always lands back in the same place.
+static func set_shown(button: Button, shown: bool) -> void:
+	if not button.has_meta(REST_POSITION_META):
+		button.set_meta(REST_POSITION_META, button.position)
+
+	var rest: Vector2 = button.get_meta(REST_POSITION_META)
+	var offscreen := Vector2(rest.x, -button.size.y)
+
+	# Already where it was asked to be, and not part-way through getting there.
+	var target := rest if shown else offscreen
+	if button.visible == shown and button.position.is_equal_approx(target):
+		return
+
+	var slide := button.create_tween().set_parallel(true)
+	if shown:
+		button.position = offscreen
+		button.modulate.a = 0.0
+		button.visible = true
+		slide.tween_property(button, "position", rest, SLIDE_TIME) \
+			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		slide.tween_property(button, "modulate:a", 1.0, SLIDE_TIME * 0.6)
+		return
+
+	slide.tween_property(button, "position", offscreen, SLIDE_TIME) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	slide.tween_property(button, "modulate:a", 0.0, SLIDE_TIME)
+	# Hidden outright at the end, so it cannot be tapped on its way out.
+	slide.tween_callback(func() -> void: button.visible = false).set_delay(SLIDE_TIME)
 
 
 static func make_button(on_pressed: Callable) -> Button:

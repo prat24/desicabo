@@ -544,7 +544,7 @@ func deal_menu_hand(screen: MenuScreen, entries: Array, question: String, presse
 	await fly_in_hand_cards(entries)
 
 	menu_screen = screen
-	back_button.visible = screen != MenuScreen.MAIN
+	OverlayButton.set_shown(back_button, screen != MenuScreen.MAIN)
 	input_enabled = true
 
 
