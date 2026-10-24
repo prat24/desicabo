@@ -2,5 +2,12 @@
 .godot/
 /android/
 
+# Web export output (see deploy/build_web.sh)
+/build/
+
+# Python (deploy/relay)
+.venv/
+__pycache__/
+
 # macOS
 .DS_Store

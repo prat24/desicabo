@@ -1,0 +1,51 @@
+# Example Caddy site for the web build (Caddy 2.6 or newer).
+#
+# Serves the exported game and passes /ws to the relay. As written it listens
+# on loopback only, for running behind something that provides HTTPS — for
+# example `tailscale serve --https=8443 http://127.0.0.1:8090` on a private
+# tailnet. To have Caddy serve a public domain with automatic HTTPS instead,
+# replace `:8090` and the `bind` line with the domain name.
+
+:8090 {
+	bind 127.0.0.1
+
+	# To require a password, uncomment and paste in the hash from
+	# `caddy hash-password`. /ws is left out because browsers do not reliably
+	# send credentials with a WebSocket; the relay has its own guards.
+	# @site not path /ws
+	# basicauth @site {
+	# 	friends PASTE_HASH_HERE
+	# }
+
+	header {
+		# A new build replaces files under the same names, so browsers check for
+		# a newer copy every time (a cheap 304 when nothing changed).
+		Cache-Control "no-cache"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Embedder-Policy "require-corp"
+		Cross-Origin-Resource-Policy "same-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+		Referrer-Policy "no-referrer"
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+
+	handle /ws {
+		reverse_proxy 127.0.0.1:8765 {
+			# Keep the player's address forwarded by a proxy on this machine, so
+			# the relay's per-address limits apply per player.
+			trusted_proxies 127.0.0.1/32 ::1/128
+		}
+	}
+
+	handle {
+		root * {$DESICABO_WEB_ROOT:/srv/desicabo/web}
+		encode zstd gzip
+		file_server {
+			# deploy/build_web.sh writes .gz copies of the large files.
+			precompressed gzip
+		}
+	}
+}

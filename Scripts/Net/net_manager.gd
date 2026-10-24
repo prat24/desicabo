@@ -1,12 +1,18 @@
-## Net — LAN multiplayer plumbing, autoloaded as `Net`. One phone hosts the
-## game over ENet and the others join it; the host keeps its authority for the
-## whole match (see GameManager, which drives every device from the host's copy
-## of the game). Seats are handed out in join order and the host is always
-## Player 1, so a two-player game is host = Player 1, joiner = Player 2.
+## Net — multiplayer plumbing, autoloaded as `Net`. One device hosts the game
+## and the others join it; the host keeps its authority for the whole match
+## (see GameManager, which drives every device from the host's copy of the
+## game). Seats are handed out in join order and the host is always Player 1,
+## so a two-player game is host = Player 1, joiner = Player 2.
 ##
-## Nothing here talks to the internet: peers find each other with a UDP
-## broadcast on the local network, so joining is a tap on a game that was found
-## rather than typing an IP address on a phone keyboard.
+## There are two ways to connect, and nothing above this file can tell them
+## apart:
+##
+## - The phone app plays over ENet on the local network. Peers find each other
+##   with a UDP broadcast, so joining is a tap on a game that was found rather
+##   than typing an IP address on a phone keyboard.
+## - The web build cannot: browsers have no UDP. It plays through the relay on
+##   the server the page came from (see RelayPeer), and players find each other
+##   by a room code the relay hands the host.
 extends Node
 
 ## ENet port the host listens on for players.
@@ -22,6 +28,8 @@ const PROBE_INTERVAL := 0.8
 const HOST_TIMEOUT := 3.0
 ## Four players at most, so the host plus three joiners.
 const MAX_CLIENTS := 3
+## Where the relay sits, beside the page the web build was loaded from.
+const RELAY_PATH := "ws"
 
 ## The lobby changed: someone joined, left, or seats were handed out.
 signal lobby_changed
@@ -46,6 +54,10 @@ var expected_players := 2
 var seats: Dictionary = {}
 ## Games found on the network: ip -> {"joined": int, "expected": int, "seen": float}.
 var found_hosts: Dictionary = {}
+## Web build only: the connection to the relay, and the code it gave this
+## game — empty until the relay has answered, and always empty on a LAN.
+var relay: RelayPeer
+var room_code := ""
 
 ## Bound on the host while it waits for players, so probes get an answer.
 var announce_socket: PacketPeerUDP
@@ -75,11 +87,18 @@ func host_game(player_count: int) -> String:
 	leave()
 	expected_players = clampi(player_count, 2, 4)
 
-	var peer := ENetMultiplayerPeer.new()
-	if peer.create_server(GAME_PORT, MAX_CLIENTS) != OK:
-		return "Could not open a game on this device."
+	if uses_relay():
+		relay = new_relay()
+		if relay.host(relay_url(), expected_players) != OK:
+			relay = null
+			return "Could not reach the game server."
+		multiplayer.multiplayer_peer = relay
+	else:
+		var peer := ENetMultiplayerPeer.new()
+		if peer.create_server(GAME_PORT, MAX_CLIENTS) != OK:
+			return "Could not open a game on this device."
+		multiplayer.multiplayer_peer = peer
 
-	multiplayer.multiplayer_peer = peer
 	is_online = true
 	is_hosting = true
 	local_player = 1
@@ -89,16 +108,24 @@ func host_game(player_count: int) -> String:
 	return ""
 
 
-## Connect to a host found on the network (or typed in by hand). Returns "" if
-## the attempt started — failure arrives later on `join_failed`.
+## Connect to a host found on the network (or typed in by hand) — or, in the
+## web build, to the game with this room code. Returns "" if the attempt
+## started — failure arrives later on `join_failed`.
 func join_game(address: String) -> String:
 	leave()
 
-	var peer := ENetMultiplayerPeer.new()
-	if peer.create_client(address, GAME_PORT) != OK:
-		return "Could not reach %s." % address
+	if uses_relay():
+		relay = new_relay()
+		if relay.join(relay_url(), address.strip_edges().to_upper()) != OK:
+			relay = null
+			return "Could not reach the game server."
+		multiplayer.multiplayer_peer = relay
+	else:
+		var peer := ENetMultiplayerPeer.new()
+		if peer.create_client(address, GAME_PORT) != OK:
+			return "Could not reach %s." % address
+		multiplayer.multiplayer_peer = peer
 
-	multiplayer.multiplayer_peer = peer
 	is_online = true
 	is_hosting = false
 	local_player = 0
@@ -122,6 +149,8 @@ func leave() -> void:
 	game_running = false
 	local_player = 0
 	seats.clear()
+	relay = null
+	room_code = ""
 
 
 ## The player number sitting at `peer_id`, or 0 for a peer with no seat.
@@ -141,6 +170,50 @@ func remote_seats() -> Dictionary:
 
 func joined_count() -> int:
 	return seats.size()
+
+
+# ── Playing through the relay (web build) ─────────────────────────────────────
+
+## Browsers cannot open the UDP sockets ENet and the network search use, so the
+## web build always goes through the relay.
+func uses_relay() -> bool:
+	return OS.has_feature("web")
+
+
+## The relay sits beside the page on the server it came from, so its address is
+## the page's own: https://cabo.example/ → wss://cabo.example/ws, or, for a game
+## served under a path next to other apps, https://games.example/cabo/ →
+## wss://games.example/cabo/ws. A page served over HTTPS gets an encrypted
+## connection to match.
+func relay_url() -> String:
+	var location: JavaScriptObject = JavaScriptBridge.get_interface("location")
+	if location == null:
+		return ""
+	var origin := str(location.get("origin"))
+	var path := str(location.get("pathname"))
+	var directory := path.substr(0, path.rfind("/") + 1)
+	var scheme := "wss://" if origin.begins_with("https://") else "ws://"
+	return scheme + origin.get_slice("://", 1) + directory + RELAY_PATH
+
+
+func new_relay() -> RelayPeer:
+	var peer := RelayPeer.new()
+	peer.room_ready.connect(on_room_ready)
+	return peer
+
+
+func on_room_ready() -> void:
+	if relay:
+		room_code = relay.room_code
+		lobby_changed.emit()
+
+
+## The relay's own words for what went wrong ("No game with that code.") when
+## it gave any, since they tell the player more than a generic line could.
+func relay_failure_or(fallback: String) -> String:
+	if relay and not relay.failure_reason.is_empty():
+		return relay.failure_reason
+	return fallback
 
 
 # ── Lobby ─────────────────────────────────────────────────────────────────────
@@ -164,7 +237,9 @@ func on_peer_connected(peer_id: int) -> void:
 
 
 func on_peer_disconnected(peer_id: int) -> void:
-	if not is_hosting:
+	# Someone turned away at the door never had a seat, so their going changes
+	# nothing — above all, it must not end a game that is already underway.
+	if not is_hosting or not seats.has(peer_id):
 		return
 
 	seats.erase(peer_id)
@@ -182,14 +257,21 @@ func on_connected_to_server() -> void:
 
 
 func on_connection_failed() -> void:
+	var reason := relay_failure_or("Could not join that game.")
 	leave()
-	join_failed.emit("Could not join that game.")
+	join_failed.emit(reason)
 
 
 func on_server_disconnected() -> void:
 	var was_playing := game_running
+	# The host has a server to lose only when it plays through the relay.
+	var lost_relay := is_hosting
 	leave()
-	if was_playing:
+	if lost_relay and was_playing:
+		connection_lost.emit("Lost connection to the game server.")
+	elif lost_relay:
+		join_failed.emit("Lost connection to the game server.")
+	elif was_playing:
 		connection_lost.emit("The host left the game.")
 	else:
 		join_failed.emit("The host closed the game.")
@@ -236,6 +318,8 @@ func net_start_game() -> void:
 ## to type its address instead of tapping a found game.
 func start_announcing() -> void:
 	stop_announcing()
+	if uses_relay():
+		return
 	var socket := PacketPeerUDP.new()
 	if socket.bind(DISCOVERY_PORT) == OK:
 		announce_socket = socket
@@ -266,6 +350,8 @@ func poll_announcements() -> void:
 func start_probing() -> void:
 	stop_probing()
 	found_hosts.clear()
+	if uses_relay():
+		return
 
 	var socket := PacketPeerUDP.new()
 	if socket.bind(0) != OK:

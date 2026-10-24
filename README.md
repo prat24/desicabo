@@ -5,8 +5,8 @@ A Cabo card game for mobile, built in Godot 4.7.
 Each player holds three face-down cards, sees them once at the start, and plays from memory.
 Lowest total when the deck runs out wins.
 
-Modes: **Local** (one device passed around), **Online** (one device hosts over Wi-Fi),
-**Bots**. 2–4 players in all three.
+Modes: **Local** (one device passed around), **Online** (one device hosts over Wi-Fi, or
+anywhere in the web build), **Bots**. 2–4 players in all three.
 
 ## Requirements
 
@@ -33,6 +33,16 @@ Requires macOS, Xcode, and an Apple ID. Targets iOS 14+, iPhone only.
 Notes:
 
 - Free Apple ID builds expire after 7 days, this is not a major issue you will just have to reinstall the game again from Xcode onto your phone to refresh it.
+
+## Web Version
+
+The game also exports to the web, so friends can play in a phone browser. Online play in the
+browser goes through a small WebSocket relay instead of the local network, and players join
+with a room code.
+
+1. **Editor → Manage Export Templates**: install the Web templates.
+2. `deploy/build_web.sh` exports to `build/web/`.
+3. Host `build/web/` with the relay. See [deploy/README.md](deploy/README.md).
 
 ## Rules
 
@@ -69,6 +79,10 @@ device animates them itself, queued one at a time. `step()` sends to everyone,
 `private_step()` sends the truth to named players and blanks to the rest, `personal_step()`
 asks each device what it may see. Clients send intent only; the host validates it against the
 current turn. `Scripts/Net/net_manager.gd` uses ENet on port 8654 and UDP broadcast on 8655.
+Browsers have no UDP, so the web build instead uses `Scripts/Net/relay_peer.gd`: a
+`MultiplayerPeer` over one WebSocket to a small relay on the server (`deploy/relay/relay.py`),
+which forwards packets between the host and the others in a room. The host still runs the
+game, so `game_manager.gd` is the same for both.
 
 **Bots** — `Scripts/AI/card_belief.gd` tracks each slot as known, grouped (shuffled hand:
 values known, positions not), or unknown. Unknown slots are valued at the average of unseen
@@ -91,6 +105,8 @@ The forget rate is scaled geometrically.
 | `Scripts/Boards/player_hand.gd` | One player's hand and its layout |
 | `Scripts/Cards/` | Faces, flips, drag, hover, deck |
 | `Scripts/Net/net_manager.gd` | Hosting, joining, discovery |
+| `Scripts/Net/relay_peer.gd` | Web build's connection through the relay |
 | `Scripts/AI/` | `card_belief.gd`, `card_bot.gd`, `bot_table.gd` |
 | `Scripts/UI/` | Menu, settings, lobby, in-game menu |
 | `Assets/` | Card art, fonts, sounds, shaders |
+| `deploy/` | Web hosting: relay, Caddy and systemd config, build and publish scripts |

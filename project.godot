@@ -20,6 +20,7 @@ config/icon="uid://ccaudtqcbolm7"
 
 [autoload]
 
+ScreenShape="*res://Scripts/screen_shape.gd"
 AudioSettings="*res://Scripts/Audio/audio_settings.gd"
 Music="*res://Scripts/Audio/music_player.gd"
 HoverSfx="*res://Scripts/Audio/hover_sfx.gd"

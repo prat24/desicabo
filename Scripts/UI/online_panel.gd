@@ -2,6 +2,9 @@
 ## game: host it, or join one found on the network. It slides down over the
 ## title screen the same way the settings card does, and closes itself once the
 ## table is full (the menu takes over from there and loads the game).
+##
+## The web build cannot search the network (see Net), so there the host is
+## given a room code to read out, and joining is typing it in.
 class_name OnlinePanel
 extends Control
 
@@ -21,7 +24,7 @@ const SMALL_BUTTON_HEIGHT := 96.0
 enum Screen {
 	CHOOSE,   ## Host a game / Join a game.
 	HOSTING,  ## Waiting for the other players to arrive.
-	BROWSING, ## Games found on the network, plus an address to type.
+	BROWSING, ## Games found on the network, plus an address (or room code) to type.
 	JOINING,  ## Connected, waiting for the host to start.
 }
 
@@ -147,9 +150,10 @@ func pin_wrapped_label_heights(node: Node, content_width: float) -> void:
 
 func build_choose_screen() -> void:
 	layout.add_child(make_title("%d PLAYERS" % player_count))
-	layout.add_child(make_label(
-		"One phone hosts the game and the others join it over the same Wi-Fi.",
-		32, HORIZONTAL_ALIGNMENT_CENTER))
+	var how_it_works := "One phone hosts the game and the others join it over the same Wi-Fi."
+	if Net.uses_relay():
+		how_it_works = "One player hosts the game and gets a room code. Everyone else joins with that code."
+	layout.add_child(make_label(how_it_works, 32, HORIZONTAL_ALIGNMENT_CENTER))
 	layout.add_child(make_spacer(20.0))
 	layout.add_child(make_button("Host a Game", start_hosting))
 	layout.add_child(make_button("Join a Game", start_browsing))
@@ -160,26 +164,40 @@ func build_hosting_screen() -> void:
 	layout.add_child(make_label(
 		"Waiting for players… %d of %d" % [Net.joined_count(), player_count],
 		40, HORIZONTAL_ALIGNMENT_CENTER))
-	var others := "the other phone" if player_count == 2 else "each other phone"
-	layout.add_child(make_label(
-		"On %s, tap Online → %d → Join a Game." % [others, player_count],
-		30, HORIZONTAL_ALIGNMENT_CENTER))
-	layout.add_child(make_label("This device: %s" % local_address_text(), 28, HORIZONTAL_ALIGNMENT_CENTER))
+	if Net.uses_relay():
+		build_room_code_rows()
+	else:
+		var others := "the other phone" if player_count == 2 else "each other phone"
+		layout.add_child(make_label(
+			"On %s, tap Online → %d → Join a Game." % [others, player_count],
+			30, HORIZONTAL_ALIGNMENT_CENTER))
+		layout.add_child(make_label("This device: %s" % local_address_text(), 28, HORIZONTAL_ALIGNMENT_CENTER))
 	layout.add_child(make_spacer(20.0))
 	layout.add_child(make_button("Cancel", back_to_choose, SMALL_BUTTON_HEIGHT))
+
+
+## Through the relay the code is the only way in, so it is the biggest thing on
+## the card — it gets read out over a call or pasted into a chat.
+func build_room_code_rows() -> void:
+	if Net.room_code.is_empty():
+		layout.add_child(make_label("Opening a room…", 32, HORIZONTAL_ALIGNMENT_CENTER))
+		return
+
+	layout.add_child(make_label("ROOM CODE", 30, HORIZONTAL_ALIGNMENT_CENTER))
+	layout.add_child(make_label(Net.room_code, 110, HORIZONTAL_ALIGNMENT_CENTER))
+	# No arrows here: the browser has only the engine's own font, which lacks them.
+	layout.add_child(make_label(
+		"Everyone else opens this page, taps Online, then %d, then Join a Game, and types the code." % player_count,
+		30, HORIZONTAL_ALIGNMENT_CENTER))
 
 
 func build_browsing_screen() -> void:
 	layout.add_child(make_title("JOIN A GAME"))
 
-	var hosts: Array = Net.found_hosts.keys()
-	hosts.sort()
-	if hosts.is_empty():
-		layout.add_child(make_label("Looking for games on this network…", 32, HORIZONTAL_ALIGNMENT_CENTER))
-	for host_ip: String in hosts:
-		var host: Dictionary = Net.found_hosts[host_ip]
-		var label := "%s  (%d/%d)" % [host_ip, int(host["joined"]), int(host["expected"])]
-		layout.add_child(make_button(label, connect_to.bind(host_ip), SMALL_BUTTON_HEIGHT, 34))
+	if Net.uses_relay():
+		layout.add_child(make_label("Type the room code from the host's screen.", 32, HORIZONTAL_ALIGNMENT_CENTER))
+	else:
+		build_found_games_rows()
 
 	layout.add_child(make_spacer(12.0))
 	layout.add_child(make_address_row())
@@ -197,15 +215,31 @@ func build_joining_screen() -> void:
 	layout.add_child(make_button("Leave", back_to_choose, SMALL_BUTTON_HEIGHT))
 
 
+func build_found_games_rows() -> void:
+	var hosts: Array = Net.found_hosts.keys()
+	hosts.sort()
+	if hosts.is_empty():
+		layout.add_child(make_label("Looking for games on this network…", 32, HORIZONTAL_ALIGNMENT_CENTER))
+	for host_ip: String in hosts:
+		var host: Dictionary = Net.found_hosts[host_ip]
+		var label := "%s  (%d/%d)" % [host_ip, int(host["joined"]), int(host["expected"])]
+		layout.add_child(make_button(label, connect_to.bind(host_ip), SMALL_BUTTON_HEIGHT, 34))
+
+
 ## Typing an address by hand is the fallback for networks that block the
 ## broadcast the search uses (and for hosts that could not open the search port).
+## In the web build it is the only way in, and what is typed is a room code.
 func make_address_row() -> HBoxContainer:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 16)
 
 	var address_field := LineEdit.new()
 	address_field.theme = UI_THEME
-	address_field.placeholder_text = "Host address"
+	if Net.uses_relay():
+		address_field.placeholder_text = "Room code"
+		address_field.max_length = RelayPeer.ROOM_CODE_LENGTH
+	else:
+		address_field.placeholder_text = "Host address"
 	address_field.add_theme_font_size_override("font_size", 34)
 	address_field.custom_minimum_size = Vector2(0.0, SMALL_BUTTON_HEIGHT)
 	address_field.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -215,6 +249,17 @@ func make_address_row() -> HBoxContainer:
 		var typed: String = address_field.text.strip_edges()
 		if not typed.is_empty():
 			connect_to(typed)
+	# The keyboard's own Go key does the same as the button beside the field.
+	# Deferred, since joining rebuilds the card — field and all — and the field
+	# is still in the middle of handling that key.
+	address_field.text_submitted.connect(func(_text: String) -> void: on_go_pressed.call_deferred())
+	# A room code joins the moment it is complete. In a phone's browser the Go
+	# key never reaches the game, and the first tap on the button only puts the
+	# keyboard away, so waiting for either reads as the join not working.
+	if Net.uses_relay():
+		address_field.text_changed.connect(func(text: String) -> void:
+			if text.strip_edges().length() == RelayPeer.ROOM_CODE_LENGTH:
+				on_go_pressed.call_deferred())
 
 	var connect_button := make_button("Go", on_go_pressed, SMALL_BUTTON_HEIGHT, 34)
 	connect_button.size_flags_horizontal = Control.SIZE_SHRINK_END
