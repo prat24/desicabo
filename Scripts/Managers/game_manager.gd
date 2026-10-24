@@ -4,10 +4,11 @@
 ## The same loop runs a hotseat game on one phone and a networked game on
 ## several. Online, the host owns the game: it holds the deck, decides what
 ## every move does, and sends each device the same sequence of "steps" to
-## animate — with only the cards that device's player is allowed to see. The
-## board itself is identical everywhere (Player 2 turns their phone upside
-## down, Player 3 turns theirs sideways), so a step is just player numbers,
-## slot numbers, and card ranks. See step(), private_step() and personal_step().
+## animate — with only the cards that device's player is allowed to see. Each
+## screen shows the same table from its own player's seat: their hand at the
+## bottom, the others round the table in turn order (see place_of()). So a step
+## is just player numbers, slot numbers, and card ranks. See step(),
+## private_step() and personal_step().
 ##
 ## Named so the bots can speak the same move vocabulary — see [CardBot].
 class_name GameManager
@@ -53,9 +54,9 @@ const HAND_EDGE_OFFSET_4P = 150.0
 ## split below, that keeps their fans clear of the bottom and top hands entirely,
 ## so each one is free to use its own half of the screen's full height.
 const HAND_RIGHT_EDGE_OFFSET_4P = 160.0
-## Players 1 and 2 sit at the left corners in a four-player game, so their whole
-## hands tilt — which also swings each fan's far end clear of the right-side hand
-## nearest it (Player 4 below, Player 3 above).
+## The bottom and top places sit at the left corners in a four-player game, so
+## their whole hands tilt — which also swings each fan's far end clear of the
+## right-side hand nearest it (the fourth place below, the third above).
 const HAND_TILT_4P = 12.0
 ## Where both tilted fans are centered horizontally (the viewport is always 1080
 ## wide; only its height varies by device). Far enough in from the corner that the
@@ -87,11 +88,6 @@ const TURN_WAIT_LABEL_HEIGHT = 80.0
 ## may cross another player's hand on the way out; those are dimmed while
 ## somebody else is playing, and the pile is not.
 const TURN_WAIT_LABEL_BAND = 380.0
-## Where that note stands for the seats along the right edge, turned sideways.
-## Centred in the one clear channel it has: the board column ends at 440, and
-## the drawn card starts at 525 with three players (the tightest of the two,
-## since its cards are the larger).
-const TURN_WAIT_LABEL_SIDE_X = 482.0
 ## How often the active player's device sends the card it is dragging to the
 ## others — often enough to look live, rarely enough to be nothing on a LAN.
 const NET_DRAG_INTERVAL = 0.05
@@ -228,10 +224,11 @@ var sfx_slide: AudioStreamPlayer
 ## Animation-only card for flights to the discard pile, so the pile's top card
 ## stays visible until the new card actually lands on it.
 @onready var flying_card: BoardCard = $FlyingCard
-@onready var player1_hand: PlayerHand = $PlayerHand
-@onready var player2_hand: PlayerHand = $Player2Hand
-@onready var player3_hand: PlayerHand = $Player3Hand
-@onready var player4_hand: PlayerHand = $Player4Hand
+## The four places round the table, in turn order from the bottom of this
+## screen: bottom, top, then the right edge (upper, lower). Each player sits at
+## one of them — see place_of() — and get_hand() is how anything finds a
+## player's cards.
+@onready var place_hands: Array[PlayerHand] = [$PlayerHand, $Player2Hand, $Player3Hand, $Player4Hand]
 
 
 func _ready() -> void:
@@ -244,8 +241,9 @@ func _ready() -> void:
 		my_seat = Net.local_player
 	elif GameConfig.vs_bots:
 		my_seat = 1
-		bots = BotTable.new(player_count, my_seat, player1_hand.cards.size(), GameSettings.bot_difficulty)
+		bots = BotTable.new(player_count, my_seat, place_hands[0].cards.size(), GameSettings.bot_difficulty)
 	screen_size = get_viewport_rect().size
+	seat_players()
 	layout_board_for_screen()
 	center_draw_position = center_draw_card.global_position
 	discard_pile_position = discard_pile_sprite.global_position
@@ -283,7 +281,7 @@ func _ready() -> void:
 ## A four-player table has no room to spare, so this is as small and as quiet as
 ## a button can be and still be found: dark glass in the top-right corner, which
 ## every layout leaves clear — the hands on the right edge start below it, and
-## the top-left belongs to Player 2's tilted fan in a four-player game.
+## the top-left belongs to the top place's tilted fan in a four-player game.
 func build_game_menu_button() -> void:
 	game_menu_button = OverlayButton.create_menu_icon(open_game_menu)
 	game_menu_button.position = Vector2(
@@ -328,10 +326,15 @@ func on_quit_requested() -> void:
 	return_to_main_menu()
 
 
-## Restarting is the host's call to make, so a client asks for it — otherwise
-## one device would re-deal on its own and the table would come apart.
 func on_restart_requested() -> void:
 	game_menu_panel.close()
+	request_restart()
+
+
+## Deal a new game. Restarting is the host's call to make, so a client asks for
+## it — otherwise one device would re-deal on its own and the table would come
+## apart.
+func request_restart() -> void:
 	if not online:
 		restart_game()
 	elif is_host():
@@ -578,18 +581,18 @@ func hand_suits(player: int) -> Array:
 
 ## Anchor the board to the real screen size: the scene is authored for
 ## 1080x1920, but stretch aspect "expand" makes the viewport taller on modern
-## phones. Two players: middle row centered, Player 2 pinned to the top.
+## phones. Two players: middle row centered, the top place pinned to the top.
 ## Three or more: the board becomes a sideways column on the left, and the
-## right edge belongs to Player 3 (and Player 4, who sits beside them).
+## right edge belongs to the third place (and the fourth, beside it).
 func layout_board_for_screen() -> void:
 	var center: Vector2 = screen_size * 0.5
-	player2_hand.position = screen_size
-	player3_hand.visible = player_count >= 3
-	player4_hand.visible = player_count >= 4
+	place_hands[1].position = screen_size
+	place_hands[2].visible = player_count >= 3
+	place_hands[3].visible = player_count >= 4
 	apply_hand_sizing()
 
 	if player_count >= 3:
-		for hand: PlayerHand in [player3_hand, player4_hand]:
+		for hand: PlayerHand in [place_hands[2], place_hands[3]]:
 			hand.position = Vector2(0.0, screen_size.y)
 			hand.rotation_degrees = -90.0
 
@@ -640,7 +643,7 @@ func apply_hand_sizing() -> void:
 			spacing = HAND_SPACING_4P
 			edge_offset = HAND_EDGE_OFFSET_4P
 
-	for hand: PlayerHand in [player1_hand, player2_hand, player3_hand, player4_hand]:
+	for hand: PlayerHand in place_hands:
 		hand.card_scale = hand_scale
 		hand.card_spacing = spacing
 		hand.arc_height = HAND_ARC_HEIGHT
@@ -653,34 +656,34 @@ func apply_hand_sizing() -> void:
 		place_four_player_hands()
 
 
-## Four hands, four corners of the screen. Players 3 and 4 share the right edge,
-## so the other two clear out of the right entirely: Player 1 tilts into the
-## bottom-left corner and Player 2 into the top-left one, each fan's far end
-## swinging away from the right-side hand beside it. With nothing else reaching
-## that far right, the two right-side hands have the screen's whole height to
-## split between them — which is what keeps them apart on a short viewport as
-## well as a tall one.
+## Four hands, four corners of the screen. The third and fourth places share
+## the right edge, so the other two clear out of the right entirely: the bottom
+## place tilts into the bottom-left corner and the top one into the top-left,
+## each fan's far end swinging away from the right-side hand beside it. With
+## nothing else reaching that far right, the two right-side hands have the
+## screen's whole height to split between them — which is what keeps them
+## apart on a short viewport as well as a tall one.
 func place_four_player_hands() -> void:
 	# The two corner fans are mirror images across the screen's middle: same
 	# distance in from the left edge and from their own edge, opposite tilts.
-	# Player 2 hangs upside down, so the mirrored tilt is a half-turn less than
-	# Player 1's rather than more. Both fans are placed outright, which is why
-	# neither needs the edge shift apply_hand_sizing() just cleared.
+	# The top place hangs upside down, so the mirrored tilt is a half-turn less
+	# than the bottom one's rather than more. Both fans are placed outright,
+	# which is why neither needs the edge shift apply_hand_sizing() just cleared.
 	place_hand_at(
-		player1_hand,
+		place_hands[0],
 		Vector2(HAND_CORNER_CENTER_X_4P, screen_size.y - HAND_EDGE_OFFSET_4P),
 		HAND_TILT_4P
 	)
 	place_hand_at(
-		player2_hand,
+		place_hands[1],
 		Vector2(HAND_CORNER_CENTER_X_4P, HAND_EDGE_OFFSET_4P),
 		180.0 - HAND_TILT_4P
 	)
 
-	for hand: PlayerHand in [player3_hand, player4_hand]:
+	for hand: PlayerHand in [place_hands[2], place_hands[3]]:
 		hand.bottom_offset = HAND_RIGHT_EDGE_OFFSET_4P
-	player3_hand.edge_shift = screen_size.y * HAND_RIGHT_SPLIT_4P
-	player4_hand.edge_shift = -screen_size.y * HAND_RIGHT_SPLIT_4P
+	place_hands[2].edge_shift = screen_size.y * HAND_RIGHT_SPLIT_4P
+	place_hands[3].edge_shift = -screen_size.y * HAND_RIGHT_SPLIT_4P
 
 
 ## Put `hand`'s fan center on `center_global`, tilted. The node pivots about its
@@ -729,7 +732,7 @@ func play_slide_sound() -> void:
 func deal_initial_hands_animated() -> void:
 	await step("step_prepare_deal")
 
-	var slots_per_hand: int = player1_hand.cards.size()
+	var slots_per_hand: int = place_hands[0].cards.size()
 	for slot in range(slots_per_hand):
 		for player in range(1, player_count + 1):
 			if deck.is_empty():
@@ -855,9 +858,9 @@ func show_turn_prompt() -> void:
 
 
 ## Warn everyone in `audience` to look away, once per orientation rather than
-## once per player: Players 3 and 4 read from the same edge, so one sideways
-## showing addresses both. The total time is fixed and split per player, so a
-## showing that covers two of them simply holds twice as long.
+## once per player: the two right-edge places read from the same edge, so one
+## sideways showing addresses both. The total time is fixed and split per
+## player, so a showing that covers two of them simply holds twice as long.
 func show_look_away_prompt(prompt_text: String, total_time: float, fade_time: float, audience: Array[int]) -> void:
 	if audience.is_empty():
 		return
@@ -888,8 +891,7 @@ func get_other_players(player: int) -> Array[int]:
 
 ## Near-black full-screen overlay with centered white text that fades in,
 ## holds, fades out, and cleans itself up. The text is rotated toward
-## `facing_player` — the one who must act on it (Player 2 sits at the top of
-## the screen, Player 3 views from the right edge).
+## `facing_player` — the one who must act on it (see facing_rotation_degrees()).
 func show_fullscreen_prompt(prompt_text: String, hold_time: float, fade_time: float = 0.25, facing_player: int = 1, text_color: Color = Color.WHITE) -> void:
 	var overlay := create_fullscreen_overlay(0.9, 400)
 	var label := make_overlay_label(prompt_text, 56)
@@ -1008,8 +1010,9 @@ func _process(_delta: float) -> void:
 
 
 ## Online, the other players watch the card being dragged around rather than
-## seeing it teleport when it is let go. Sent as a fraction of the screen,
-## since a taller phone is a taller board.
+## seeing it teleport when it is let go. Every screen lays the table out from
+## its own seat, so the position goes over in table_space() rather than as a
+## point on this screen.
 func broadcast_drag(delta: float) -> void:
 	if not online or not is_my_turn():
 		return
@@ -1018,11 +1021,12 @@ func broadcast_drag(delta: float) -> void:
 	if net_drag_timer < NET_DRAG_INTERVAL:
 		return
 	net_drag_timer = 0.0
-	rpc("net_drag", dragged_card == discard_top_card, dragged_card.global_position / screen_size)
+	var table_position := table_space(current_player).affine_inverse() * dragged_card.global_position
+	rpc("net_drag", dragged_card == discard_top_card, table_position)
 
 
 @rpc("any_peer", "call_remote", "unreliable")
-func net_drag(is_discard_card: bool, normalized_position: Vector2) -> void:
+func net_drag(is_discard_card: bool, table_position: Vector2) -> void:
 	# These arrive out of order by design, so anything that lands after the
 	# drop has been played out is stale and ignored.
 	if not online or turn_state != TurnState.WAITING_FOR_DROP:
@@ -1031,8 +1035,18 @@ func net_drag(is_discard_card: bool, normalized_position: Vector2) -> void:
 		return
 
 	var card: BoardCard = discard_top_card if is_discard_card else center_draw_card
-	card.global_position = normalized_position * screen_size
+	card.global_position = table_space(current_player) * table_position
 	card.scale = hand_card_scale()
+
+
+## Positions on the table that every screen agrees on, whatever its seat or
+## size: measured from where the drawn card rests, along the way to the dragging
+## player's own hand and the way to the discard pile. A dragged card travels
+## between those three, so it shows in the same spot on every screen.
+func table_space(player: int) -> Transform2D:
+	var hand := get_hand(player)
+	var origin := get_draw_card_rest_position()
+	return Transform2D(hand.to_global(hand.fan_center()) - origin, discard_pile_position - origin, origin)
 
 
 func _input(event: InputEvent) -> void:
@@ -1040,9 +1054,8 @@ func _input(event: InputEvent) -> void:
 	if mouse_event == null or mouse_event.button_index != MOUSE_BUTTON_LEFT:
 		return
 
-	# Watching someone else's turn: nothing on this screen is touchable, apart
-	# from the tap that leaves the final scores.
-	if has_own_seat() and not is_my_turn() and turn_state != TurnState.GAME_OVER:
+	# Watching someone else's turn: nothing on this screen is touchable.
+	if has_own_seat() and not is_my_turn():
 		return
 
 	# Tracked on every press, even in the states that act on the press itself,
@@ -1058,14 +1071,13 @@ func _input(event: InputEvent) -> void:
 
 	match turn_state:
 		TurnState.GAME_OVER:
-			# The overlay marks that final scores are on screen; any tap exits.
-			if mouse_event.pressed and game_over_overlay:
-				return_to_main_menu()
+			# The final scores' own buttons are all that does anything now.
+			pass
 		TurnState.SPECIAL_7:
-			if is_tap:
+			if is_tap and not is_pointer_on_skip_button():
 				await handle_seven_click()
 		TurnState.CHOOSING_PLAYER:
-			if is_tap:
+			if is_tap and not is_pointer_on_skip_button():
 				handle_choose_click()
 		_:
 			if mouse_event.pressed:
@@ -1319,8 +1331,10 @@ func apply_turn_focus() -> void:
 
 
 ## Online, a player who is not up keeps a standing "Player N's turn…" note over
-## the dimmed board, turned toward their own side of the table. They still
-## watch every card move; they just cannot touch anything.
+## the dimmed board. It sits in the clear band between their own hand — always
+## at the bottom of their screen — and the middle of the board, where it covers
+## neither the drawn card nor anybody's cards. They still watch every card
+## move; they just cannot touch anything.
 func update_turn_wait_label() -> void:
 	if turn_wait_label:
 		turn_wait_label.queue_free()
@@ -1328,29 +1342,11 @@ func update_turn_wait_label() -> void:
 	if not has_own_seat() or is_my_turn():
 		return
 
-	turn_wait_label = make_overlay_label("Player %d's turn…" % current_player, 52)
+	turn_wait_label = make_overlay_label("%s's turn…" % Net.display_name(current_player), 52)
 	turn_wait_label.z_index = TURN_FOCUS_OVERLAY_Z + 1
 	turn_wait_label.size = Vector2(screen_size.x, TURN_WAIT_LABEL_HEIGHT)
-	turn_wait_label.pivot_offset = turn_wait_label.size * 0.5
-	turn_wait_label.rotation_degrees = facing_rotation_degrees(my_seat)
-	turn_wait_label.position = turn_wait_label_position()
+	turn_wait_label.position = Vector2(0.0, screen_size.y * 0.5 + TURN_WAIT_LABEL_BAND)
 	add_child(turn_wait_label)
-
-
-## The clear band between this player's own hand and the middle of the board,
-## on their side of the screen — the one place a note can sit without covering
-## either the drawn card or anybody's cards.
-func turn_wait_label_position() -> Vector2:
-	var middle: float = screen_size.y * 0.5
-
-	# Seats 3 and 4 read the board sideways, so their note is turned a quarter
-	# turn and stands in the gap between the board column and their own hands.
-	# Rotating about its own centre leaves it an upright strip there.
-	if my_seat >= 3:
-		return Vector2(TURN_WAIT_LABEL_SIDE_X - screen_size.x * 0.5, middle - TURN_WAIT_LABEL_HEIGHT * 0.5)
-	if my_seat == 2:
-		return Vector2(0.0, middle - TURN_WAIT_LABEL_BAND - TURN_WAIT_LABEL_HEIGHT)
-	return Vector2(0.0, middle + TURN_WAIT_LABEL_BAND)
 
 
 func clear_turn_focus() -> void:
@@ -1403,8 +1399,7 @@ func check_special_card_effect() -> void:
 			await step("step_jumble_hand", [jumble_player, shuffled_order(get_hand(jumble_player).cards.size())])
 
 		"7":
-			var swap_player := await pick_power_target("Choose a player who\nyou wish to swap with")
-			await run_seven_swap_power(swap_player)
+			await run_seven_swap_power()
 
 
 ## Turn `player`'s hand face up, but only on `viewer`'s screen — the K is the
@@ -1447,7 +1442,7 @@ func shuffled_order(count: int) -> Array:
 ## Which player a K/J/7 power acts on: always the other one in a 2-player game;
 ## with three or four, the active player taps an opponent's cards to pick. That
 ## tapping is a hotseat path — an online game is two players for now.
-func pick_power_target(choose_prompt_text: String) -> int:
+func pick_power_target(choose_prompt_text: String, skippable := false) -> int:
 	if player_count == 2:
 		return current_player % player_count + 1
 	if is_bot_turn():
@@ -1455,7 +1450,7 @@ func pick_power_target(choose_prompt_text: String) -> int:
 			String(current_draw["rank"]),
 			get_other_players(current_player)
 		)
-	return await choose_target_player(choose_prompt_text)
+	return await choose_target_player(choose_prompt_text, skippable)
 
 
 ## Prompt the active player, then light up every opponent hand and wait for a
@@ -1463,13 +1458,15 @@ func pick_power_target(choose_prompt_text: String) -> int:
 ##
 ## The other devices put the same overlay up and watch: they can see a choice is
 ## being made and which hands are in play, they just cannot make it.
-func choose_target_player(choose_prompt_text: String) -> int:
+##
+## A `skippable` choice (the 7's) also offers Skip, and returns 0 if taken.
+func choose_target_player(choose_prompt_text: String, skippable := false) -> int:
 	chosen_target_player = 0
 	awaiting_choice = true
 
-	await step("step_begin_choose", [current_player, choose_prompt_text])
+	await step("step_begin_choose", [current_player, choose_prompt_text, skippable])
 
-	if not await wait_until(func() -> bool: return chosen_target_player != 0):
+	if not await wait_until(func() -> bool: return chosen_target_player != 0 or (skippable and seven_skipped)):
 		return 0
 	awaiting_choice = false
 
@@ -1477,10 +1474,10 @@ func choose_target_player(choose_prompt_text: String) -> int:
 	return chosen_target_player
 
 
-func step_begin_choose(chooser: int, choose_prompt_text: String) -> void:
+func step_begin_choose(chooser: int, choose_prompt_text: String, skippable: bool) -> void:
 	hovered_special_card = null
 
-	var prompt_text := choose_prompt_text if is_my_turn() else "Player %d is choosing…" % chooser
+	var prompt_text := choose_prompt_text if is_my_turn() else "%s is choosing…" % Net.display_name(chooser)
 	await show_fullscreen_prompt(prompt_text, turn_prompt_time, 0.15, prompt_facing_player(), UiPalette.ACCENT)
 
 	# Same layering as the seven power: board cards dim under the overlay,
@@ -1494,6 +1491,8 @@ func step_begin_choose(chooser: int, choose_prompt_text: String) -> void:
 		hand.z_index = RAISED_HAND_Z_INDEX if selectable else 0
 
 	turn_state = TurnState.CHOOSING_PLAYER if is_my_turn() else TurnState.ANIMATING
+	if skippable and is_my_turn():
+		show_seven_skip_button()
 
 
 ## The seven keeps the dim overlay for the power that follows; a King or a Jack
@@ -1607,10 +1606,10 @@ func step_draw_card(rank: String, suit: String) -> void:
 
 	# In 3-player mode the drawn card turns to face whoever's turn it is. Four
 	# players keep the two upright hands' card upright — it lands beside the
-	# board, where they both read it fine — but Players 3 and 4 draw to the
-	# sideways column on their own edge, so their card turns with them.
+	# board, where they both read it fine — but the right-edge places draw to
+	# the sideways column on their own edge, so their card turns with them.
 	var target_rotation := 0.0
-	if player_count == 3 or current_player >= 3:
+	if player_count == 3 or place_of(current_player) >= 3:
 		target_rotation = facing_rotation_degrees(current_player)
 
 	play_slide_sound()
@@ -1632,14 +1631,14 @@ func step_draw_card(rank: String, suit: String) -> void:
 
 
 ## Where the drawn card rests this turn. Once the board is a sideways column,
-## Players 1 and 2 get the card stepped to the side away from the discard pile,
-## while the right-side players' sideways card parks right on top of the deck
-## pile (which isn't interactive), nudged up a touch so its edge cannot cover
-## the tappable discard pile below.
+## the bottom and top places get the card stepped to the side away from the
+## discard pile, while the right-edge places' sideways card parks right on top
+## of the deck pile (which isn't interactive), nudged up a touch so its edge
+## cannot cover the tappable discard pile below.
 func get_draw_card_rest_position() -> Vector2:
 	var rest := center_draw_position
 	if player_count >= 3:
-		if current_player >= 3:
+		if place_of(current_player) >= 3:
 			rest = deck_sprite.global_position + Vector2(0.0, -30.0)
 		else:
 			rest.x += DRAW_CARD_TURN_OFFSET
@@ -1938,10 +1937,21 @@ func set_hand_enabled(hand: PlayerHand, enabled: bool) -> void:
 ## The host's side of the 7: put every device into the picking state, wait for
 ## the active player's two cards (from this device or over the wire), then swap
 ## them everywhere. Nothing resumes until the cards have landed.
-func run_seven_swap_power(target_player: int) -> void:
+## The 7: swap one of your cards for one of another player's, sight unseen — or
+## skip it. Skip is on offer from the start, including while the other player
+## is still being picked.
+func run_seven_swap_power() -> void:
 	seven_choice.clear()
 	seven_skipped = false
 	awaiting_seven = true
+
+	var target_player := await pick_power_target("Choose a player who\nyou wish to swap with", true)
+	if target_player == 0:
+		# Skipped before anyone was picked — or the board is on its way out.
+		awaiting_seven = false
+		if seven_skipped:
+			await step("step_end_seven")
+		return
 
 	await step("step_begin_seven", [target_player])
 
@@ -2008,7 +2018,11 @@ func step_end_seven() -> void:
 		hand.z_index = 0
 
 
+## Shown from the start of the 7's power and kept through it, so picking the
+## other player and then the cards never makes it pop in a second time.
 func show_seven_skip_button() -> void:
+	if seven_skip_button:
+		return
 	seven_skip_button = Button.new()
 	seven_skip_button.text = "Skip (don't swap)"
 	seven_skip_button.theme = UI_THEME
@@ -2028,13 +2042,16 @@ func show_seven_skip_button() -> void:
 	seven_skip_button.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 
 	seven_skip_button.focus_mode = Control.FOCUS_NONE
-	seven_skip_button.z_index = OVERLAY_Z_INDEX + 10
-	seven_skip_button.size = Vector2(580.0, 130.0)
-	seven_skip_button.position = (screen_size - seven_skip_button.size) * 0.5
-	seven_skip_button.pivot_offset = seven_skip_button.size * 0.5
-	seven_skip_button.rotation_degrees = facing_rotation_degrees(current_player)
+	# Above the raised hands as well as the overlay: with three players the
+	# right-hand player's cards reach under the middle of the screen.
+	seven_skip_button.z_index = RAISED_HAND_Z_INDEX + 10
 	seven_skip_button.pressed.connect(on_seven_skip_pressed)
 	add_child(seven_skip_button)
+	# As wide as its words, so it reaches no further across the table than it must.
+	seven_skip_button.size = Vector2(seven_skip_button.get_combined_minimum_size().x, 130.0)
+	seven_skip_button.position = skip_button_position(seven_skip_button.size)
+	seven_skip_button.pivot_offset = seven_skip_button.size * 0.5
+	seven_skip_button.rotation_degrees = facing_rotation_degrees(current_player)
 
 	# Quick pop-in.
 	seven_skip_button.scale = Vector2(0.6, 0.6)
@@ -2045,6 +2062,34 @@ func show_seven_skip_button() -> void:
 	pop.tween_property(seven_skip_button, "modulate:a", 1.0, 0.18)
 
 
+## Where the Skip button stands. With three or four players the right-edge hands
+## reach in across the middle of the screen, so a button read upright moves to
+## the clear strip at the left, between the top hand and the deck. Two players
+## leave the middle free, and a button turned toward another side of a shared
+## phone keeps to the middle too.
+func skip_button_position(button_size: Vector2) -> Vector2:
+	var centred := (screen_size - button_size) * 0.5
+	if player_count < 3 or not is_zero_approx(facing_rotation_degrees(current_player)):
+		return centred
+
+	var top_hand_bottom := 0.0
+	for card in place_hands[1].cards:
+		top_hand_bottom = maxf(top_hand_bottom, card.get_global_rect().end.y)
+	var deck_rect := deck_sprite.get_global_transform() * deck_sprite.get_rect()
+	var strip_middle := (top_hand_bottom + deck_rect.position.y) * 0.5
+	return Vector2(deck_rect.position.x, strip_middle - button_size.y * 0.5)
+
+
+## Whether the pointer is on the 7's Skip button. _input sees every tap before
+## any button does, so without this a tap on Skip would also pick whatever card
+## lies under it.
+func is_pointer_on_skip_button() -> bool:
+	if seven_skip_button == null:
+		return false
+	var local_point := seven_skip_button.get_global_transform().affine_inverse() * get_viewport().get_mouse_position()
+	return Rect2(Vector2.ZERO, seven_skip_button.size).has_point(local_point)
+
+
 func remove_seven_skip_button() -> void:
 	if seven_skip_button:
 		seven_skip_button.queue_free()
@@ -2052,7 +2097,7 @@ func remove_seven_skip_button() -> void:
 
 
 func on_seven_skip_pressed() -> void:
-	if turn_state != TurnState.SPECIAL_7:
+	if turn_state != TurnState.SPECIAL_7 and turn_state != TurnState.CHOOSING_PLAYER:
 		return
 
 	if selected_source_card:
@@ -2202,21 +2247,31 @@ func animate_swap_player_cards(first: PlayerCard, second: PlayerCard) -> void:
 		hand.arrange_cards()
 
 
+## Every player's hand, in player order.
 func get_all_hands() -> Array[PlayerHand]:
-	var hands: Array[PlayerHand] = [player1_hand, player2_hand]
-	if player_count >= 3:
-		hands.append(player3_hand)
-	if player_count >= 4:
-		hands.append(player4_hand)
+	var hands: Array[PlayerHand] = []
+	for player in range(1, player_count + 1):
+		hands.append(get_hand(player))
 	return hands
 
 
 func get_hand(player: int) -> PlayerHand:
-	match player:
-		1: return player1_hand
-		2: return player2_hand
-		3: return player3_hand
-		_: return player4_hand
+	return place_hands[place_of(player) - 1]
+
+
+## Give every player the hand at their place on this screen, so each card is
+## stamped with its real owner — the scene's numbering only holds for Player 1.
+func seat_players() -> void:
+	for player in range(1, player_count + 1):
+		get_hand(player).player_id = player
+
+
+## Where `player` sits on this screen: 1 is the bottom, and the rest follow
+## round the table in turn order. Each screen seats its own player at the
+## bottom — a phone passed round a table (hotseat) sits with Player 1 — so
+## everyone sees the same table, from their own side of it.
+func place_of(player: int) -> int:
+	return posmod(player - maxi(my_seat, 1), player_count) + 1
 
 
 func get_active_hand() -> PlayerHand:
@@ -2230,11 +2285,11 @@ func advance_to_next_player() -> void:
 	current_player = current_player % player_count + 1
 
 
-## How much a screen-facing element must rotate to be upright for a player:
-## Player 1 sits at the bottom, Player 2 at the top, and Players 3 and 4 both
-## look in from the right edge — so they read the same rotation.
+## How much a screen-facing element must rotate to be upright for a player,
+## from where they sit on this screen: the bottom place reads it upright, the
+## top one upside down, and both right-edge places sideways.
 func facing_rotation_degrees(player: int) -> float:
-	match player:
+	match place_of(player):
 		2: return 180.0
 		3, 4: return -90.0
 		_: return 0.0
@@ -2257,8 +2312,8 @@ func step_end_game(ranks: Array, suits: Array) -> void:
 	turn_state = TurnState.GAME_OVER
 	clear_turn_focus()
 	center_draw_card.visible = false
-	# The scores are read by tapping anywhere, so the corner button steps out of
-	# the way rather than swallowing the tap that leaves.
+	# The scores come with their own Play Again and Main Menu buttons, so the
+	# corner button steps out of the way.
 	OverlayButton.set_shown(game_menu_button, false)
 
 	for player in range(1, player_count + 1):
@@ -2311,13 +2366,12 @@ func show_game_over_overlay() -> void:
 			winner_count += 1
 			winner_player = i + 1
 
-	var title := "It's a tie!" if winner_count > 1 else "Player %d wins!" % winner_player
+	var title := "It's a tie!" if winner_count > 1 else "%s wins!" % Net.display_name(winner_player)
 
 	game_over_overlay = create_fullscreen_overlay(0.9, 400)
 
-	# Winner, totals, and the exit hint are one column, so they stay together
-	# under the headline. The whole block turns sideways and sits in the middle
-	# of the screen, where every player can read it from their side of the phone.
+	# Winner, totals and the buttons are one column, so they stay together under
+	# the headline.
 	var block := VBoxContainer.new()
 	block.alignment = BoxContainer.ALIGNMENT_CENTER
 	block.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -2326,18 +2380,78 @@ func show_game_over_overlay() -> void:
 
 	block.add_child(make_overlay_label(title, 72))
 	for i in range(scores.size()):
-		block.add_child(make_overlay_label("Player %d: %d points" % [i + 1, scores[i]], 40))
-	block.add_child(make_overlay_label("Tap anywhere for the main menu", 30))
+		block.add_child(make_overlay_label("%s: %d points" % [Net.display_name(i + 1), scores[i]], 40))
+	block.add_child(make_spacer(24.0))
+	block.add_child(make_game_over_buttons())
 
-	# Turned a quarter turn, the block's own width runs down the screen's long
-	# edge, so it is sized from that and centered on both axes. Godot grows a
-	# Control that is set smaller than its contents, so the height is read back
-	# rather than assumed.
-	block.size = Vector2(screen_size.y, block.get_combined_minimum_size().y)
+	# On a screen of its own the block stands upright. On a phone passed round a
+	# table it turns a quarter turn and sits in the middle, where every player
+	# can read it from their side of the phone — its width then runs down the
+	# screen's long edge, so it is sized from that. Godot grows a Control that is
+	# set smaller than its contents, so the height is read back, not assumed.
+	var sideways := not has_own_seat()
+	var width: float = screen_size.y if sideways else screen_size.x
+	block.size = Vector2(width, block.get_combined_minimum_size().y)
 	var block_size := block.size
 	block.pivot_offset = block_size * 0.5
-	block.rotation_degrees = 90.0
+	block.rotation_degrees = 90.0 if sideways else 0.0
 	block.position = (screen_size - block_size) * 0.5
+
+
+## Play Again deals a new game at the same table — online, for everyone (see
+## request_restart()). Main Menu leaves, which online ends the match for the
+## others as well.
+func make_game_over_buttons() -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_theme_constant_override("separation", 32)
+
+	var play_again := make_overlay_button("Play Again")
+	play_again.pressed.connect(func() -> void:
+		# Online a client only asks the host, so the button stays pressed
+		# until the host deals.
+		play_again.disabled = true
+		request_restart())
+	row.add_child(play_again)
+
+	var main_menu := make_overlay_button("Main Menu")
+	main_menu.pressed.connect(return_to_main_menu)
+	row.add_child(main_menu)
+	return row
+
+
+## A beige button for the dark full-screen cards, in the menus' style.
+func make_overlay_button(button_text: String) -> Button:
+	var button := Button.new()
+	button.text = button_text
+	button.theme = UI_THEME
+	button.add_theme_font_size_override("font_size", 40)
+	button.custom_minimum_size = Vector2(340.0, 112.0)
+	button.focus_mode = Control.FOCUS_NONE
+	for color_name in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color", "font_disabled_color"]:
+		button.add_theme_color_override(color_name, UiPalette.INK)
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = UiPalette.ACCENT
+	style.set_corner_radius_all(16)
+	style.set_content_margin_all(18.0)
+	button.add_theme_stylebox_override("normal", style)
+	button.add_theme_stylebox_override("hover", style)
+	button.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+
+	var pressed_style := style.duplicate() as StyleBoxFlat
+	pressed_style.bg_color = UiPalette.ACCENT_PRESSED
+	button.add_theme_stylebox_override("pressed", pressed_style)
+	button.add_theme_stylebox_override("disabled", pressed_style)
+	return button
+
+
+func make_spacer(height: float) -> Control:
+	var spacer := Control.new()
+	spacer.custom_minimum_size = Vector2(0.0, height)
+	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return spacer
 
 
 func make_overlay_label(label_text: String, font_size: int) -> Label:

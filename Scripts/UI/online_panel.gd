@@ -164,6 +164,7 @@ func build_hosting_screen() -> void:
 	layout.add_child(make_label(
 		"Waiting for players… %d of %d" % [Net.joined_count(), player_count],
 		40, HORIZONTAL_ALIGNMENT_CENTER))
+	layout.add_child(make_label(Net.table_text(), 30, HORIZONTAL_ALIGNMENT_CENTER))
 	if Net.uses_relay():
 		build_room_code_rows()
 	else:
@@ -211,6 +212,7 @@ func build_joining_screen() -> void:
 	layout.add_child(make_label(
 		"Waiting for players… %d of %d" % [Net.joined_count(), Net.expected_players],
 		34, HORIZONTAL_ALIGNMENT_CENTER))
+	layout.add_child(make_label(Net.table_text(), 30, HORIZONTAL_ALIGNMENT_CENTER))
 	layout.add_child(make_spacer(20.0))
 	layout.add_child(make_button("Leave", back_to_choose, SMALL_BUTTON_HEIGHT))
 

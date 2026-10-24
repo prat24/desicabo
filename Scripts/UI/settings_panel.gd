@@ -8,6 +8,8 @@ signal closed
 const UI_THEME := preload("res://Assets/Themes/clean_ui.tres")
 const TRACK_COLOR := Color(0.76, 0.72, 0.64)
 const FILL_COLOR := Color(0.35, 0.3, 0.24)
+## Secondary text on the card, such as the line under a field.
+const HINT_COLOR := Color(0.08, 0.07, 0.05, 0.6)
 const BACKDROP_ALPHA := 0.75
 const SLIDE_TIME := 0.35
 ## Resting distance from the top of the screen once the card has slid in. The
@@ -67,6 +69,7 @@ func build_panel() -> void:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	layout.add_child(title)
 
+	layout.add_child(make_name_row())
 	layout.add_child(make_slider_row("Music", AudioSettings.music_volume, AudioSettings.set_music_volume, format_percent))
 	layout.add_child(make_slider_row("Sound Effects", AudioSettings.sfx_volume, AudioSettings.set_sfx_volume, format_percent))
 	layout.add_child(make_slider_row("Bot Difficulty", GameSettings.bot_difficulty, GameSettings.set_bot_difficulty, format_difficulty))
@@ -97,6 +100,31 @@ func make_label(text: String, font_size: int) -> Label:
 	label.add_theme_font_size_override("font_size", font_size)
 	label.add_theme_color_override("font_color", UiPalette.INK)
 	return label
+
+
+## The name other players see in online games, saved with the rest of the
+## settings when the card closes. Games on one phone and against bots go on
+## calling everyone "Player N", which the hint under the field says.
+func make_name_row() -> VBoxContainer:
+	var row := VBoxContainer.new()
+	row.add_theme_constant_override("separation", 14)
+	row.add_child(make_label("Online Name", 40))
+
+	var field := LineEdit.new()
+	field.theme = UI_THEME
+	field.text = GameSettings.player_name
+	field.placeholder_text = "Your name"
+	field.max_length = GameSettings.MAX_NAME_LENGTH
+	field.add_theme_font_size_override("font_size", 38)
+	field.custom_minimum_size = Vector2(0.0, 96.0)
+	field.text_changed.connect(GameSettings.set_player_name)
+	row.add_child(field)
+
+	var hint := make_label("Shown to other players in online games.", 28)
+	hint.add_theme_color_override("font_color", HINT_COLOR)
+	row.add_child(hint)
+
+	return row
 
 
 ## One labelled slider row. `describe` turns the 0..1 value into the readout

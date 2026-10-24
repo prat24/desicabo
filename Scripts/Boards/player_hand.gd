@@ -26,13 +26,19 @@ class_name PlayerHand
 	set(v): edge_shift = v; _refresh()
 
 # ── Identity ──────────────────────────────────────────────────────────────────
-## Which player owns this hand. Stamped onto each card on deal.
-@export var player_id: int = 1
-## When true, cards are anchored to the top of the screen (Player 2).
+## Which player owns this hand, stamped onto each of its cards — drop targeting
+## and power picks go by the card's stamp. The scene numbers the hands as Player
+## 1 sees the table; GameManager re-seats them for every other screen.
+@export var player_id: int = 1:
+	set(v):
+		player_id = v
+		for card in cards:
+			card.player_id = v
+## When true, cards are anchored to the top of the screen (the top place).
 @export var position_at_top: bool = false:
 	set(v): position_at_top = v; _refresh()
 ## When true, the layout spans the screen's vertical edge instead (the local
-## span uses swapped viewport dimensions). The side player in 3-player mode.
+## span uses swapped viewport dimensions). The right-edge places, 3+ players.
 @export var sideways: bool = false:
 	set(v): sideways = v; _refresh()
 ## If true, deals a random hand in _ready() — handy for editor testing.

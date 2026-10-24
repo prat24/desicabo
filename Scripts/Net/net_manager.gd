@@ -52,6 +52,11 @@ var local_player := 0
 var expected_players := 2
 ## peer id -> player number. The host is peer 1 and always Player 1.
 var seats: Dictionary = {}
+## seat -> the name that player chose, as the host has it (see display_name()).
+var player_names: Dictionary = {}
+## Host only: peer id -> name, as each player introduced themselves. Kept by
+## peer rather than seat so a name that arrives before its seat is not lost.
+var peer_names: Dictionary = {}
 ## Games found on the network: ip -> {"joined": int, "expected": int, "seen": float}.
 var found_hosts: Dictionary = {}
 ## Web build only: the connection to the relay, and the code it gave this
@@ -103,6 +108,8 @@ func host_game(player_count: int) -> String:
 	is_hosting = true
 	local_player = 1
 	seats = {1: 1}
+	peer_names = {1: GameSettings.clean_name(GameSettings.player_name)}
+	share_names()
 	start_announcing()
 	lobby_changed.emit()
 	return ""
@@ -149,6 +156,8 @@ func leave() -> void:
 	game_running = false
 	local_player = 0
 	seats.clear()
+	player_names.clear()
+	peer_names.clear()
 	relay = null
 	room_code = ""
 
@@ -170,6 +179,22 @@ func remote_seats() -> Dictionary:
 
 func joined_count() -> int:
 	return seats.size()
+
+
+## What to call the player in `seat`: the name they chose, or "Player N" when
+## they have not set one (and in any game that is not online).
+func display_name(seat: int) -> String:
+	var chosen := str(player_names.get(seat, ""))
+	return chosen if not chosen.is_empty() else "Player %d" % seat
+
+
+## Everyone seated so far, by name, in seat order.
+func table_text() -> String:
+	var names: Array[String] = []
+	for seat in range(1, expected_players + 1):
+		if seats.values().has(seat):
+			names.append(display_name(seat))
+	return ", ".join(names)
 
 
 # ── Playing through the relay (web build) ─────────────────────────────────────
@@ -229,17 +254,20 @@ func on_peer_connected(peer_id: int) -> void:
 		return
 
 	seats[peer_id] = next_free_seat()
-	rpc("net_lobby_state", seats, expected_players)
+	share_names()
+	rpc("net_lobby_state", seats, expected_players, player_names)
 	lobby_changed.emit()
-
-	if seats.size() == expected_players:
-		start_game()
+	start_game_if_ready()
 
 
 func on_peer_disconnected(peer_id: int) -> void:
+	if not is_hosting:
+		return
+	peer_names.erase(peer_id)
+
 	# Someone turned away at the door never had a seat, so their going changes
 	# nothing — above all, it must not end a game that is already underway.
-	if not is_hosting or not seats.has(peer_id):
+	if not seats.has(peer_id):
 		return
 
 	seats.erase(peer_id)
@@ -247,13 +275,44 @@ func on_peer_disconnected(peer_id: int) -> void:
 		connection_lost.emit("A player left the game.")
 		return
 
-	rpc("net_lobby_state", seats, expected_players)
+	share_names()
+	rpc("net_lobby_state", seats, expected_players, player_names)
 	lobby_changed.emit()
 
 
+## Say who we are; the seat arrives from the host in net_lobby_state.
 func on_connected_to_server() -> void:
-	# The seat arrives from the host in net_lobby_state; nothing to do but wait.
-	pass
+	rpc_id(1, "net_introduce", GameSettings.player_name)
+
+
+## A joiner's name, sent the moment it connects. Names come from other people's
+## devices, so the host cleans each one before anyone sees it.
+@rpc("any_peer", "call_remote", "reliable")
+func net_introduce(raw_name: String) -> void:
+	if not is_hosting or game_running:
+		return
+
+	peer_names[multiplayer.get_remote_sender_id()] = GameSettings.clean_name(raw_name)
+	share_names()
+	rpc("net_lobby_state", seats, expected_players, player_names)
+	lobby_changed.emit()
+	start_game_if_ready()
+
+
+## Host side: rebuild the seat -> name table from who is seated and who has
+## introduced themselves.
+func share_names() -> void:
+	player_names = {}
+	for peer_id: int in seats:
+		if peer_names.has(peer_id):
+			player_names[int(seats[peer_id])] = peer_names[peer_id]
+
+
+## The table is full and everyone at it has said who they are, so nobody's
+## first turn shows them as "Player N".
+func start_game_if_ready() -> void:
+	if not game_running and seats.size() == expected_players and player_names.size() == expected_players:
+		start_game()
 
 
 func on_connection_failed() -> void:
@@ -286,9 +345,10 @@ func next_free_seat() -> int:
 
 
 @rpc("authority", "call_remote", "reliable")
-func net_lobby_state(host_seats: Dictionary, host_expected: int) -> void:
+func net_lobby_state(host_seats: Dictionary, host_expected: int, host_names: Dictionary) -> void:
 	seats = host_seats
 	expected_players = host_expected
+	player_names = host_names
 	local_player = seat_of(multiplayer.get_unique_id())
 	lobby_changed.emit()
 
