@@ -383,12 +383,21 @@ func animate_in() -> void:
 func on_backdrop_input(event: InputEvent) -> void:
 	# Ignore taps until the card has finished sliding in, so the tap that opened
 	# the panel cannot immediately dismiss it.
-	if not is_open:
+	if not is_open or not is_dismissable():
 		return
 
 	var mouse_event := event as InputEventMouseButton
 	if mouse_event and mouse_event.pressed and mouse_event.button_index == MOUSE_BUTTON_LEFT:
 		close()
+
+
+## Whether a tap beside the card puts it away. Only on the first screen, where
+## there is nothing to lose. Past it a room is open, a code is half typed, or a
+## seat is taken, and a stray tap — the one that brings the page back after
+## switching apps to send the code, say — must not throw that away. Those
+## screens are left by their own Cancel, Back or Leave.
+func is_dismissable() -> bool:
+	return screen == Screen.CHOOSE
 
 
 ## Closing gives up whatever connection the panel had — the one exception is the

@@ -1011,8 +1011,9 @@ func _process(_delta: float) -> void:
 
 ## Online, the other players watch the card being dragged around rather than
 ## seeing it teleport when it is let go. Every screen lays the table out from
-## its own seat, so the position goes over in table_space() rather than as a
-## point on this screen.
+## its own seat, so the position goes over as two points every screen agrees
+## on — one by the board, one by the dragging player's hand — and how near the
+## hand it is (see drag_position()).
 func broadcast_drag(delta: float) -> void:
 	if not online or not is_my_turn():
 		return
@@ -1021,12 +1022,15 @@ func broadcast_drag(delta: float) -> void:
 	if net_drag_timer < NET_DRAG_INTERVAL:
 		return
 	net_drag_timer = 0.0
-	var table_position := table_space(current_player).affine_inverse() * dragged_card.global_position
-	rpc("net_drag", dragged_card == discard_top_card, table_position)
+	var point := dragged_card.global_position
+	rpc("net_drag", dragged_card == discard_top_card,
+		board_space(current_player).affine_inverse() * point,
+		hand_space(current_player).affine_inverse() * point,
+		hand_weight(point))
 
 
 @rpc("any_peer", "call_remote", "unreliable")
-func net_drag(is_discard_card: bool, table_position: Vector2) -> void:
+func net_drag(is_discard_card: bool, board_point: Vector2, hand_point: Vector2, weight: float) -> void:
 	# These arrive out of order by design, so anything that lands after the
 	# drop has been played out is stale and ignored.
 	if not online or turn_state != TurnState.WAITING_FOR_DROP:
@@ -1035,18 +1039,54 @@ func net_drag(is_discard_card: bool, table_position: Vector2) -> void:
 		return
 
 	var card: BoardCard = discard_top_card if is_discard_card else center_draw_card
-	card.global_position = table_space(current_player) * table_position
+	card.global_position = drag_position(board_point, hand_point, weight)
 	card.scale = hand_card_scale()
 
 
-## Positions on the table that every screen agrees on, whatever its seat or
-## size: measured from where the drawn card rests, along the way to the dragging
-## player's own hand and the way to the discard pile. A dragged card travels
-## between those three, so it shows in the same spot on every screen.
-func table_space(player: int) -> Transform2D:
+## Where the card the active player is dragging shows on this screen. Near the
+## board it follows board_space(), so it reaches the discard pile when theirs
+## does; near their hand it follows hand_space(), so it hovers the same card
+## theirs does. In between it eases from one to the other. No single mapping
+## can do both: a hand across the table is a half-turn of the player's own, but
+## the board is the same way round on every screen, so the two disagree on
+## which way is left.
+func drag_position(board_point: Vector2, hand_point: Vector2, weight: float) -> Vector2:
+	var near_board := board_space(current_player) * board_point
+	var near_hand := hand_space(current_player) * hand_point
+	return near_board.lerp(near_hand, clampf(weight, 0.0, 1.0)).clamp(Vector2.ZERO, screen_size)
+
+
+## Measured from where the drawn card rests, along the way to `player`'s hand
+## and the way to the discard pile: those three land in the same spot on every
+## screen, whatever its seat or size.
+func board_space(player: int) -> Transform2D:
 	var hand := get_hand(player)
 	var origin := get_draw_card_rest_position()
 	return Transform2D(hand.to_global(hand.fan_center()) - origin, discard_pile_position - origin, origin)
+
+
+## `player`'s hand as a frame of its own, centred on the fan and turned with it.
+## Every screen lays a hand's cards out alike within it, so a point over one of
+## them is over the same card on every screen — and, as across a real table,
+## the owner's leftmost card is the rightmost one seen from the far side.
+func hand_space(player: int) -> Transform2D:
+	var hand := get_hand(player)
+	return hand.get_global_transform() * Transform2D(0.0, hand.fan_center())
+
+
+## How near `point` is to the active player's hand rather than the board: 0 on
+## the way between the drawn card's rest and the discard pile, 1 along the row
+## of cards in the hand, and in between by how close it is to each.
+func hand_weight(point: Vector2) -> float:
+	var to_board := point.distance_to(Geometry2D.get_closest_point_to_segment(
+		point, get_draw_card_rest_position(), discard_pile_position))
+	var hand := get_active_hand()
+	var to_hand := INF
+	for slot in range(hand.cards.size() - 1):
+		var from := hand.to_global(hand.cards[slot].resting_position)
+		var to := hand.to_global(hand.cards[slot + 1].resting_position)
+		to_hand = minf(to_hand, point.distance_to(Geometry2D.get_closest_point_to_segment(point, from, to)))
+	return to_board / (to_board + to_hand) if to_board + to_hand > 0.0 else 0.0
 
 
 func _input(event: InputEvent) -> void:
