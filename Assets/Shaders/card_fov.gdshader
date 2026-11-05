@@ -78,10 +78,6 @@ void fragment() {
 	p.xy *= v * inv_rot_mat[2].z;
 	o = v * inv_rot_mat[2].xy;
 
-	if (cull_back && p.z <= 0.0) {
-		discard;
-	}
-
 	uv = (p.xy / p.z).xy - o;
 	uv += 0.5;
 	float asp = (region_rate / TEXTURE_PIXEL_SIZE).y / (region_rate / TEXTURE_PIXEL_SIZE).x;
@@ -89,6 +85,13 @@ void fragment() {
 	uv = rotate_uv(uv, vec2(0.5, 0.5), rotation + rand_trans_power * 0.05 * sin(TIME * (0.9 + mod(rand_seed, 0.5)) + rand_seed * 123.8985));
 	uv.y /= asp;
 
+	// Sample before any discard: card textures are mipmapped, and picking the
+	// mip level needs the neighbouring pixels' UVs, which a discard can drop.
+	vec4 color = texture(TEXTURE, pivot + uv * region_rate);
+
+	if (cull_back && p.z <= 0.0) {
+		discard;
+	}
 	if (uv.x > 1.0 || uv.x < 0.0) {
 		discard;
 	}
@@ -96,6 +99,5 @@ void fragment() {
 		discard;
 	}
 
-	uv = pivot + uv * region_rate;
-	COLOR = texture(TEXTURE, uv);
+	COLOR = color;
 }

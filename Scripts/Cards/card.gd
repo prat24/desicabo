@@ -4,6 +4,15 @@
 class_name Card
 extends Node2D
 
+## Card textures are 420x570, three times the 140x190 card size the layout is
+## built around, so they stay sharp in the biggest hands. The card scenes draw
+## their sprites at this scale (a card at scale 1 is 280x380 on screen); a bare
+## Sprite2D showing a card texture multiplies it in too. Keep this in step with
+## the Sprite2D/Shadow scale in player_card.tscn and board_card.tscn.
+const SPRITE_SCALE := 2.0 / 3.0
+## How thin a flip squashes the card, as a fraction of its width.
+const FLIP_SQUASH := 0.04
+
 @export var back_texture: Texture2D
 @export var tilt_intensity: float = 12.0
 
@@ -66,7 +75,7 @@ func animate_flip(to_front: bool, duration: float = 0.24) -> void:
 	var flip_tween: Tween = create_tween()
 	flip_tween.set_trans(Tween.TRANS_BACK)
 	flip_tween.set_ease(Tween.EASE_IN_OUT)
-	flip_tween.tween_property(sprite, "scale:x", 0.08, half_duration)
+	flip_tween.tween_property(sprite, "scale:x", base_scale_x * FLIP_SQUASH, half_duration)
 	flip_tween.tween_callback(show_front if to_front else show_back)
 	flip_tween.tween_property(sprite, "scale:x", base_scale_x, half_duration)
 	await flip_tween.finished

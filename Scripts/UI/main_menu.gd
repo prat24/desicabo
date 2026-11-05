@@ -31,11 +31,11 @@ const TITLE_CARDS_PER_ROW := 5
 const TITLE_CARD_ROW_SPACING := 260.0
 const TITLE_ROW_STAGGER := 45.0
 const TITLE_CARD_SPACING := 185.0
-## These are bare sprites, so their scale counts the card scene's own 2 in:
-## 2.6 here is the 1.3 of a card, a step under the menu hand's 1.4.
-const TITLE_CARD_SCALE := 2.6
+## In card scale, a step under the menu hand's 1.4. The title cards are bare
+## sprites, so Card.SPRITE_SCALE is multiplied in where they are drawn.
+const TITLE_CARD_SCALE := 1.3
 ## Cards start bigger, as if flying in toward the table from the viewer.
-const TITLE_CARD_START_SCALE := 3.4
+const TITLE_CARD_START_SCALE := 1.7
 const THROW_TIME := 0.5
 const THROW_STAGGER := 0.11
 const OFFSCREEN_MARGIN := 320.0
@@ -373,19 +373,20 @@ func throw_title_cards() -> void:
 	for spot in land_spots:
 		var card := Sprite2D.new()
 		card.texture = CARD_BACK_TEXTURE
+		card.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 		card_pile.add_child(card)
 
 		var land_rotation: float = spot["rotation"]
 		card.position = random_offscreen_start(screen)
 		card.rotation_degrees = land_rotation + randf_range(-150.0, 150.0)
-		card.scale = Vector2(TITLE_CARD_START_SCALE, TITLE_CARD_START_SCALE)
+		card.scale = Vector2.ONE * TITLE_CARD_START_SCALE * Card.SPRITE_SCALE
 
 		var throw := create_tween().set_parallel(true)
 		throw.tween_property(card, "position", spot["position"], THROW_TIME) \
 			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 		throw.tween_property(card, "rotation_degrees", land_rotation, THROW_TIME) \
 			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-		throw.tween_property(card, "scale", Vector2(TITLE_CARD_SCALE, TITLE_CARD_SCALE), THROW_TIME) \
+		throw.tween_property(card, "scale", Vector2.ONE * TITLE_CARD_SCALE * Card.SPRITE_SCALE, THROW_TIME) \
 			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 		# Throws overlap, so the landing sound rides on each card's own tween
 		# instead of an awaited one — same clock, so it still fires on the

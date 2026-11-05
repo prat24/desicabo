@@ -18,9 +18,9 @@ const CARD_COLLISION_MASK = 1
 ## Cards resting on the board — the deck and discard piles — are drawn smaller
 ## than the ones in a hand, which leaves the hands room to fan out without
 ## piling up. Must stay in step with the DeckSprite/DiscardPileSprite scale in
-## the scene (they are bare sprites, so their scale is this times the card
-## sprite's 2). A card only travels between this size and a hand's size, never
-## jumping: see board_card_rest_scale().
+## the scene (they are bare sprites, so their scale is this times
+## Card.SPRITE_SCALE). A card only travels between this size and a hand's
+## size, never jumping: see board_card_rest_scale().
 const NORMAL_CARD_SCALE = Vector2(1.05, 1.05)
 ## How much a hovered board card swells past whatever size it is resting at.
 const HOVER_SCALE_MULTIPLIER = 1.05

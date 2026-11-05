@@ -4,6 +4,7 @@
 [ext_resource type="Script" uid="uid://btboemg8u553n" path="res://Scripts/Cards/player_card.gd" id="1_vutb1"]
 
 [node name="Card" type="Node2D" unique_id=1832272288]
+texture_filter = 4
 script = ExtResource("1_vutb1")
 back_texture = ExtResource("1_84gl2")
 
@@ -11,10 +12,10 @@ back_texture = ExtResource("1_84gl2")
 modulate = Color(0, 0, 0, 0.32)
 z_index = -1
 position = Vector2(5, 9)
-scale = Vector2(2, 2)
+scale = Vector2(0.6666667, 0.6666667)
 texture = ExtResource("1_84gl2")
 
 [node name="Sprite2D" type="Sprite2D" parent="." unique_id=1623482511]
 position = Vector2(-2.842171e-14, 2.842171e-14)
-scale = Vector2(2, 2)
+scale = Vector2(0.6666667, 0.6666667)
 texture = ExtResource("1_84gl2")

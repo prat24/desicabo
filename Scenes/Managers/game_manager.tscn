@@ -45,8 +45,9 @@ player_id = 4
 sideways = true
 
 [node name="DeckSprite" type="Sprite2D" parent="." unique_id=815075980]
+texture_filter = 4
 position = Vector2(165, 960)
-scale = Vector2(2.1, 2.1)
+scale = Vector2(0.7, 0.7)
 texture = ExtResource("4_j1mdm")
 
 [node name="CenterDrawCard" parent="." unique_id=1108670356 instance=ExtResource("2_il670")]
@@ -54,8 +55,9 @@ z_index = 1
 position = Vector2(540, 960)
 
 [node name="DiscardPileSprite" type="Sprite2D" parent="." unique_id=1257155411]
+texture_filter = 4
 position = Vector2(915, 960)
-scale = Vector2(2.1, 2.1)
+scale = Vector2(0.7, 0.7)
 texture = ExtResource("6_xbfc7")
 
 [node name="DiscardTopCard" parent="." unique_id=88107710 instance=ExtResource("2_il670")]

@@ -7,6 +7,7 @@
 size = Vector2(132, 191)
 
 [node name="Card" type="Node2D" unique_id=1832272288]
+texture_filter = 4
 script = ExtResource("1_ws51j")
 back_texture = ExtResource("3_3sxif")
 
@@ -14,12 +15,12 @@ back_texture = ExtResource("3_3sxif")
 modulate = Color(0, 0, 0, 0.32)
 z_index = -1
 position = Vector2(5, 9)
-scale = Vector2(2, 2)
+scale = Vector2(0.6666667, 0.6666667)
 texture = ExtResource("3_3sxif")
 
 [node name="Sprite2D" type="Sprite2D" parent="." unique_id=1623482511]
 position = Vector2(-2.842171e-14, 2.842171e-14)
-scale = Vector2(2, 2)
+scale = Vector2(0.6666667, 0.6666667)
 texture = ExtResource("3_3sxif")
 
 [node name="Area2D" type="Area2D" parent="." unique_id=1492354595]
