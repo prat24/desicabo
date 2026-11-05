@@ -76,6 +76,10 @@ func animate_flip(to_front: bool, duration: float = 0.24) -> void:
 	flip_tween.set_trans(Tween.TRANS_BACK)
 	flip_tween.set_ease(Tween.EASE_IN_OUT)
 	flip_tween.tween_property(sprite, "scale:x", base_scale_x * FLIP_SQUASH, half_duration)
+	# The whoosh swells into its peak, so it starts early enough for that peak
+	# to land edge-on, where the card turns fastest and its face swaps.
+	flip_tween.parallel().tween_callback(FlipSfx.play_flip) \
+		.set_delay(maxf(0.0, half_duration - CardSfx.FLIP_PEAK_TIME))
 	flip_tween.tween_callback(show_front if to_front else show_back)
 	flip_tween.tween_property(sprite, "scale:x", base_scale_x, half_duration)
 	await flip_tween.finished

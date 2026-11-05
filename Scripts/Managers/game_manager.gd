@@ -719,14 +719,22 @@ func setup_audio() -> void:
 
 
 ## The two card cues. `slide` goes on the frame a card starts moving, `place`
-## on the frame it lands — both are called next to the tween they belong to,
-## never on a separate timer, so the audio cannot drift from the animation.
+## on the frame it lands — both ride on the tween they belong to, never on a
+## separate timer, so the audio cannot drift from the animation. A landing is
+## the frame the card reads as arrived, which an ease-out reaches well before
+## its last frame, so `place` goes through cue_place_on_landing().
 func play_place_sound() -> void:
 	sfx_place.play()
 
 
 func play_slide_sound() -> void:
 	sfx_slide.play()
+
+
+## Every in-game flight is a cubic tween; this puts the place cue on `tween`
+## where its `duration`-long flight lands. Add the flight to `tween` first.
+func cue_place_on_landing(tween: Tween, duration: float, ease_type: Tween.EaseType) -> void:
+	CardSfx.cue_on_landing(tween, play_place_sound, duration, Tween.TRANS_CUBIC, ease_type)
 
 
 func deal_initial_hands_animated() -> void:
@@ -764,9 +772,9 @@ func step_deal_card(player: int, slot: int, rank: String, suit: String) -> void:
 		deck_sprite.global_position,
 		initial_deal_fly_time,
 		deck_sprite.scale,
-		deck_sprite.rotation_degrees
+		deck_sprite.rotation_degrees,
+		play_place_sound
 	)
-	play_place_sound()
 	await pause(initial_deal_stagger)
 
 
@@ -1457,8 +1465,7 @@ func reveal_hand_to(player: int, viewer: int) -> void:
 
 func step_jumble_hand(player: int, order: Array) -> void:
 	play_slide_sound()
-	await get_hand(player).jumble_cards(order)
-	play_place_sound()
+	await get_hand(player).jumble_cards(order, play_place_sound)
 
 
 ## A shuffled slot order for the jumble, worked out once by the host so every
@@ -1709,10 +1716,10 @@ func step_discard_drawn(rank: String, suit: String) -> void:
 	# Back down to the pile's size on the way out of play.
 	move_tween.tween_property(center_draw_card, "scale", NORMAL_CARD_SCALE, SNAP_TIME) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	cue_place_on_landing(move_tween, SNAP_TIME, Tween.EASE_IN_OUT)
 	await move_tween.finished
 
 	place_card_on_discard(center_draw_card)
-	play_place_sound()
 	center_draw_card.visible = false
 
 
@@ -1765,6 +1772,7 @@ func step_swap_drawn_into_slot(
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	move_tween.tween_property(center_draw_card, "scale", player_card.resting_scale, SNAP_TIME) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	cue_place_on_landing(move_tween, SNAP_TIME, Tween.EASE_IN_OUT)
 	await move_tween.finished
 
 	var incoming := make_card(rank, suit)
@@ -1774,7 +1782,6 @@ func step_swap_drawn_into_slot(
 		incoming["texture"]
 	)
 	player_card.set_drag_hovered(false)
-	play_place_sound()
 	center_draw_card.visible = false
 
 	await animate_card_to_discard(
@@ -1855,11 +1862,11 @@ func step_take_discard_into_slot(
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	move_tween.tween_property(discard_top_card, "scale", player_card.resting_scale, SNAP_TIME) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	cue_place_on_landing(move_tween, SNAP_TIME, Tween.EASE_IN_OUT)
 	await move_tween.finished
 
 	player_card.setup_card(taken_data["rank"], taken_data["suit"], taken_data["texture"])
 	player_card.set_drag_hovered(false)
-	play_place_sound()
 	discard_top_card.visible = false
 
 	turn_over_drawn_card(drawn_rank, drawn_suit)
@@ -1871,9 +1878,9 @@ func step_take_discard_into_slot(
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	center_tween.tween_property(center_draw_card, "scale", NORMAL_CARD_SCALE, DISCARD_FLY_TIME) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	cue_place_on_landing(center_tween, DISCARD_FLY_TIME, Tween.EASE_IN_OUT)
 	await center_tween.finished
 	place_card_on_discard(center_draw_card)
-	play_place_sound()
 	center_draw_card.visible = false
 
 	await animate_card_to_discard(old_hand_data, player_card.global_position, player_card.resting_scale)
@@ -1921,12 +1928,12 @@ func animate_card_to_discard(card_data: Dictionary, start_position: Vector2, sta
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	move_tween.tween_property(flying_card, "scale", NORMAL_CARD_SCALE, DISCARD_FLY_TIME) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	cue_place_on_landing(move_tween, DISCARD_FLY_TIME, Tween.EASE_IN_OUT)
 	flying_card.flip_to_front(false)
 
 	await move_tween.finished
 	place_card_on_discard(flying_card)
 	flying_card.visible = false
-	play_place_sound()
 
 
 ## Stamp `card`'s face onto the discard pile's top-card slot.
@@ -2273,11 +2280,11 @@ func animate_swap_player_cards(first: PlayerCard, second: PlayerCard) -> void:
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	swap_tween.tween_property(second, "global_position", first_global, SWAP_FLY_TIME) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	cue_place_on_landing(swap_tween, SWAP_FLY_TIME, Tween.EASE_IN_OUT)
 	await swap_tween.finished
 
 	first.setup_card(second_data["rank"], second_data["suit"], second_data["texture"])
 	second.setup_card(first_data["rank"], first_data["suit"], first_data["texture"])
-	play_place_sound()
 
 	# Every hand, not just the first two: the flight parks each card in the
 	# other's slot at a raised z-index, and only its own hand's re-arrange puts

@@ -92,13 +92,15 @@ func _deck_local_rotation(deck_rotation_degrees: float) -> float:
 
 
 ## Deal one card from deck with a fly-in animation from the deck sprite.
+## `on_landed` runs on the frame the card reads as arrived in the hand.
 func animate_deal_card(
 	card_index: int,
 	card_data: Dictionary,
 	deck_global_pos: Vector2,
 	fly_time: float,
 	deck_scale: Vector2 = Vector2.ONE,
-	deck_rotation_degrees: float = 0.0
+	deck_rotation_degrees: float = 0.0,
+	on_landed: Callable = Callable()
 ) -> void:
 	var card: PlayerCard = cards[card_index]
 	card.player_id = player_id
@@ -119,6 +121,8 @@ func animate_deal_card(
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	fly.tween_property(card, "scale", card_scale, fly_time) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	if on_landed.is_valid():
+		CardSfx.cue_on_landing(fly, on_landed, fly_time)
 	await fly.finished
 
 	card.position = card.resting_position
@@ -189,8 +193,9 @@ func _refresh() -> void:
 ## Animate all cards flying to shuffled positions and swap their underlying data.
 ## Called when the active player draws a Jack (affects the opponent's hand).
 ## `new_order` is the slot each card moves to; the caller picks it, so an online
-## game jumbles the same hand the same way on every device.
-func jumble_cards(new_order: Array) -> void:
+## game jumbles the same hand the same way on every device. `on_landed` runs on
+## the frame the cards read as settled in their new slots.
+func jumble_cards(new_order: Array, on_landed: Callable = Callable()) -> void:
 	var count := cards.size()
 	if count < 2 or new_order.size() != count:
 		return
@@ -205,10 +210,13 @@ func jumble_cards(new_order: Array) -> void:
 	# Fly all cards to their new slot positions simultaneously.
 	for card in cards:
 		card.z_index = 50
+	const JUMBLE_TIME := 0.45
 	var fly := create_tween().set_parallel(true)
 	for idx in range(count):
-		fly.tween_property(cards[idx], "position", rest_positions[new_order[idx]], 0.45) \
+		fly.tween_property(cards[idx], "position", rest_positions[new_order[idx]], JUMBLE_TIME) \
 		   .set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	if on_landed.is_valid():
+		CardSfx.cue_on_landing(fly, on_landed, JUMBLE_TIME, Tween.TRANS_CUBIC, Tween.EASE_IN_OUT)
 	await fly.finished
 
 	# Apply shuffled data and restore card state.

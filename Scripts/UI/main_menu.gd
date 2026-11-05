@@ -13,7 +13,9 @@ const PLAYER_CARD_SCENE := preload("res://Scenes/Cards/player_card.tscn")
 const CARD_BACK_TEXTURE := preload("res://Assets/Art/PNG/Cards/cardBack_main.png")
 const UI_THEME := preload("res://Assets/Themes/clean_ui.tres")
 const AIR_RISE_SOUND := preload("res://Assets/Sounds/air rise.mp3")
-const BOOM_SOUND := preload("res://Assets/Sounds/boom.mp3")
+## A WAV cut to start on the boom: the MP3 it came from opened on 100 ms of
+## silence, so the boom landed well after the title snapped back.
+const BOOM_SOUND := preload("res://Assets/Sounds/boom.wav")
 const TITLE_SFX_VOLUME_DB := -20.0
 
 # ── Title impact: the title swells, snaps back, and blasts the pile away ──────
@@ -36,16 +38,18 @@ const TITLE_CARD_SPACING := 185.0
 const TITLE_CARD_SCALE := 1.3
 ## Cards start bigger, as if flying in toward the table from the viewer.
 const TITLE_CARD_START_SCALE := 1.7
+## How long a thrown card takes to skid to rest across the table.
 const THROW_TIME := 0.5
+## How long it takes to drop onto the table. It shrinks from its start size
+## faster and faster, like a falling card, and stops dead on touchdown: one
+## exact frame, which is the frame the landing sound plays on. The skid keeps
+## going after it.
+const THROW_DROP_TIME := 0.3
+## It hits a touch smaller than its resting size, then springs back to it.
+const THROW_IMPACT_SQUASH := 0.97
+const THROW_SETTLE_TIME := 0.12
 const THROW_STAGGER := 0.11
 const OFFSCREEN_MARGIN := 320.0
-## When a thrown card visually touches down, as a fraction of THROW_TIME.
-## The scale uses TRANS_BACK/EASE_OUT, which shrinks the card past its target
-## and springs back — that squash is what the eye reads as the impact, and it
-## peaks at 0.58 of the tween, not at its end. The flights that land on the
-## tween's last frame (the menu hand, everything in-game) use a plain ease-out
-## with no overshoot, so they need no fraction like this.
-const THROW_LAND_FRACTION := 0.58
 
 # ── Menu hands (each entry becomes one card button; `id` names its action) ────
 const MAIN_HAND := [
@@ -381,17 +385,23 @@ func throw_title_cards() -> void:
 		card.rotation_degrees = land_rotation + randf_range(-150.0, 150.0)
 		card.scale = Vector2.ONE * TITLE_CARD_START_SCALE * Card.SPRITE_SCALE
 
+		var rest_scale := Vector2.ONE * TITLE_CARD_SCALE * Card.SPRITE_SCALE
+		var impact_scale := rest_scale * THROW_IMPACT_SQUASH
+
 		var throw := create_tween().set_parallel(true)
 		throw.tween_property(card, "position", spot["position"], THROW_TIME) \
 			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 		throw.tween_property(card, "rotation_degrees", land_rotation, THROW_TIME) \
 			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-		throw.tween_property(card, "scale", Vector2.ONE * TITLE_CARD_SCALE * Card.SPRITE_SCALE, THROW_TIME) \
-			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		throw.tween_property(card, "scale", impact_scale, THROW_DROP_TIME) \
+			.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 		# Throws overlap, so the landing sound rides on each card's own tween
-		# instead of an awaited one — same clock, so it still fires on the
-		# exact frame that card touches down.
-		throw.tween_callback(play_place_sound).set_delay(THROW_TIME * THROW_LAND_FRACTION)
+		# instead of an awaited one — same clock, so it fires on the exact
+		# frame that card touches down.
+		throw.tween_callback(play_place_sound).set_delay(THROW_DROP_TIME)
+		throw.tween_property(card, "scale", rest_scale, THROW_SETTLE_TIME) \
+			.from(impact_scale).set_delay(THROW_DROP_TIME) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 
 		await get_tree().create_timer(THROW_STAGGER).timeout
 
@@ -470,7 +480,7 @@ func fly_in_hand_cards(entries: Array) -> void:
 			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 		fly.tween_property(card, "rotation_degrees", target_rotation, HAND_FLY_TIME) \
 			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-		fly.tween_callback(play_place_sound).set_delay(HAND_FLY_TIME)
+		CardSfx.cue_on_landing(fly, play_place_sound, HAND_FLY_TIME)
 
 		await get_tree().create_timer(HAND_STAGGER).timeout
 
