@@ -19,11 +19,7 @@ static func create_deck() -> Array[Dictionary]:
 			deck.append({
 				"rank": rank,
 				"suit": suit,
-				"texture": load(get_card_texture_path(suit, rank))
+				"texture": CardArt.front(suit, rank)
 			})
 
 	return deck
-
-
-static func get_card_texture_path(suit: String, rank: String) -> String:
-	return "res://Assets/Art/PNG/Cards/card%s%s.png" % [suit, rank]

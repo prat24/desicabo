@@ -13,8 +13,10 @@ const SPRITE_SCALE := 2.0 / 3.0
 ## How thin a flip squashes the card, as a fraction of its width.
 const FLIP_SQUASH := 0.04
 
-@export var back_texture: Texture2D
 @export var tilt_intensity: float = 12.0
+
+## Taken from the player's card look (see [CardArt]) when the card is ready.
+var back_texture: Texture2D
 
 var rank := ""
 var suit := ""
@@ -31,6 +33,7 @@ var sprite_rest_scale: Vector2 = Vector2.ONE
 
 func _ready() -> void:
 	sprite_rest_scale = sprite.scale
+	back_texture = CardArt.back()
 	CardShader.apply(sprite, randf() * 1000.0)
 	CardShader.set_inset(sprite, CardShader.RESTING_INSET)
 	show_back()

@@ -10,13 +10,16 @@ extends Control
 
 const GAME_SCENE_PATH := "res://Scenes/Managers/game_manager.tscn"
 const PLAYER_CARD_SCENE := preload("res://Scenes/Cards/player_card.tscn")
-const CARD_BACK_TEXTURE := preload("res://Assets/Art/PNG/Cards/cardBack_main.png")
 const UI_THEME := preload("res://Assets/Themes/clean_ui.tres")
 const AIR_RISE_SOUND := preload("res://Assets/Sounds/air rise.mp3")
 ## A WAV cut to start on the boom: the MP3 it came from opened on 100 ms of
 ## silence, so the boom landed well after the title snapped back.
 const BOOM_SOUND := preload("res://Assets/Sounds/boom.wav")
 const TITLE_SFX_VOLUME_DB := -20.0
+## Simple Cards are as dark as the title, so over that pile the title gets a
+## white outline, shown only where a card is behind it.
+const TITLE_REVEAL_SHADER := preload("res://Assets/Shaders/title_reveal.gdshader")
+const TITLE_OUTLINE_SIZE := 14
 
 # ── Title impact: the title swells, snaps back, and blasts the pile away ──────
 const TITLE_GROW_SCALE := 1.07
@@ -52,21 +55,23 @@ const THROW_STAGGER := 0.11
 const OFFSCREEN_MARGIN := 320.0
 
 # ── Menu hands (each entry becomes one card button; `id` names its action) ────
+## `art` is the card's picture inside the art folder; [CardArt] picks the
+## watercolour or simple version of it.
 const MAIN_HAND := [
-	{"id": "local", "texture": preload("res://Assets/Art/PNG/TitleCards/Local.png"), "enabled": true},
-	{"id": "online", "texture": preload("res://Assets/Art/PNG/TitleCards/Online.png"), "enabled": true},
-	{"id": "settings", "texture": preload("res://Assets/Art/PNG/TitleCards/Settings.png"), "enabled": true},
+	{"id": "local", "art": "TitleCards/Local.png", "enabled": true},
+	{"id": "online", "art": "TitleCards/Online.png", "enabled": true},
+	{"id": "settings", "art": "TitleCards/Settings.png", "enabled": true},
 ]
 const PLAYER_COUNT_HAND := [
-	{"id": "2", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts2.png"), "enabled": true},
-	{"id": "3", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts3.png"), "enabled": true},
-	{"id": "4", "texture": preload("res://Assets/Art/PNG/Cards/cardHearts4.png"), "enabled": true},
+	{"id": "2", "art": "Cards/cardHearts2.png", "enabled": true},
+	{"id": "3", "art": "Cards/cardHearts3.png", "enabled": true},
+	{"id": "4", "art": "Cards/cardHearts4.png", "enabled": true},
 ]
 ## Who a local game is against, asked before the player count: the player takes
 ## seat 1 either way, and against bots every other seat is played by one.
 const OPPONENT_HAND := [
-	{"id": "friends", "texture": preload("res://Assets/Art/PNG/TitleCards/Friends.png"), "enabled": true},
-	{"id": "bots", "texture": preload("res://Assets/Art/PNG/TitleCards/bots.png"), "enabled": true},
+	{"id": "friends", "art": "TitleCards/Friends.png", "enabled": true},
+	{"id": "bots", "art": "TitleCards/bots.png", "enabled": true},
 ]
 const OPPONENT_QUESTION := "Who would you like to play against?"
 const COUNT_QUESTION := "How many players?"
@@ -99,6 +104,7 @@ const FADE_OVERLAY_Z := 500
 const FADE_IN_TIME := 0.4
 const FADE_OUT_TIME := 0.35
 
+@onready var swirl_background: ColorRect = $SwirlBackground
 @onready var solid_background: ColorRect = $Background
 @onready var card_pile: Node2D = $CardPile
 @onready var title_label: Label = $TitleLabel
@@ -109,6 +115,9 @@ var sfx_slide: AudioStreamPlayer
 var sfx_air_rise: AudioStreamPlayer
 var sfx_boom: AudioStreamPlayer
 var hand_cards: Array[PlayerCard] = []
+## Each hand card's `art`, in step with hand_cards, for repainting them.
+var hand_card_art: Array[String] = []
+var background_tween: Tween
 var clickable_cards: Array[PlayerCard] = []
 var hovered_card: PlayerCard
 ## Card buttons act on release, not press: on a phone, holding a finger on a
@@ -132,6 +141,7 @@ func _ready() -> void:
 	# be holding a connection open; the menu is always a clean slate.
 	Net.leave()
 	Net.game_starting.connect(on_online_game_starting)
+	GameSettings.simple_cards_changed.connect(on_simple_cards_changed)
 	sfx_place = CardSfx.create_place_player()
 	sfx_slide = CardSfx.create_slide_player()
 	add_child(sfx_place)
@@ -139,6 +149,10 @@ func _ready() -> void:
 	sfx_air_rise = make_title_sfx_player(AIR_RISE_SOUND)
 	sfx_boom = make_title_sfx_player(BOOM_SOUND)
 	build_back_button()
+	if GameSettings.simple_cards:
+		outline_title_for_dark_cards()
+		# Covered by the plain backdrop for good, so it need not draw at all.
+		swirl_background.hide()
 	run_intro()
 
 
@@ -159,7 +173,7 @@ func run_intro() -> void:
 	await run_title_impact()
 	Music.start()
 	await fly_in_hand_cards(MAIN_HAND)
-	reveal_swirl_background()
+	fade_background_to_card_look()
 	input_enabled = true
 
 
@@ -186,7 +200,22 @@ func run_title_impact() -> void:
 	sfx_air_rise.stop()
 	sfx_boom.play()
 	title_label.add_theme_color_override("font_color", Color.WHITE)
+	# Any outline was only there to show the title on dark cards; from here it
+	# is plain white text in either card look.
+	title_label.material = null
+	title_label.remove_theme_constant_override("outline_size")
 	await blow_away_title_cards()
+
+
+## The dark title disappears against the navy Simple Cards, so it gets a white
+## outline that title_reveal.gdshader draws only over the cards themselves.
+func outline_title_for_dark_cards() -> void:
+	var reveal := ShaderMaterial.new()
+	reveal.shader = TITLE_REVEAL_SHADER
+	reveal.set_shader_parameter("background_color", solid_background.color)
+	title_label.material = reveal
+	title_label.add_theme_color_override("font_outline_color", Color.WHITE)
+	title_label.add_theme_constant_override("outline_size", TITLE_OUTLINE_SIZE)
 
 
 ## Jitter the title while it swells, ramping from still to TITLE_SHAKE_STRENGTH
@@ -229,11 +258,26 @@ func blow_away_title_cards() -> void:
 
 
 ## Once the menu is fully assembled, the solid backdrop dissolves to reveal
-## the animated swirl background (same shader as the game) beneath it.
-func reveal_swirl_background() -> void:
-	var fade_tween := create_tween()
-	fade_tween.tween_property(solid_background, "modulate:a", 0.0, 1.2) \
+## the animated swirl background (same shader as the game) beneath it. Simple
+## Cards keeps the plain backdrop instead, and switching it in Settings fades
+## between the two. The swirl stops drawing whenever it is covered.
+func fade_background_to_card_look() -> void:
+	var plain := GameSettings.simple_cards
+	if not plain:
+		swirl_background.show()
+
+	if background_tween:
+		background_tween.kill()
+	background_tween = create_tween()
+	background_tween.tween_property(solid_background, "modulate:a", 1.0 if plain else 0.0, 1.2) \
 		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	if plain:
+		background_tween.tween_callback(swirl_background.hide)
+
+
+func on_simple_cards_changed() -> void:
+	repaint_hand_cards()
+	fade_background_to_card_look()
 
 
 ## Smooth arrival (from launch or from a finished game): start black, fade in
@@ -373,10 +417,11 @@ func throw_title_cards() -> void:
 	# Shuffled landing order so the pile builds up randomly, not in a sweep.
 	var land_spots := build_title_card_spots(title_center)
 	land_spots.shuffle()
+	var card_back := CardArt.back()
 
 	for spot in land_spots:
 		var card := Sprite2D.new()
-		card.texture = CARD_BACK_TEXTURE
+		card.texture = card_back
 		card.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 		card_pile.add_child(card)
 
@@ -450,7 +495,7 @@ func fly_in_hand_cards(entries: Array) -> void:
 		var entry: Dictionary = entries[i]
 		var card: PlayerCard = PLAYER_CARD_SCENE.instantiate()
 		hand_cards_root.add_child(card)
-		card.setup_card(entry["id"], "", entry["texture"])
+		card.setup_card(entry["id"], "", CardArt.texture(entry["art"]))
 		card.show_front()
 
 		var fan_offset := i - mid
@@ -470,6 +515,7 @@ func fly_in_hand_cards(entries: Array) -> void:
 		card.rotation_degrees = 0.0
 
 		hand_cards.append(card)
+		hand_card_art.append(entry["art"])
 		if entry["enabled"]:
 			clickable_cards.append(card)
 		else:
@@ -502,6 +548,17 @@ func slide_out_hand_cards() -> void:
 	for card in hand_cards:
 		card.queue_free()
 	hand_cards.clear()
+	hand_card_art.clear()
+
+
+## Settings opens over the main hand, so switching the card look repaints the
+## cards on the table straight away instead of at the next deal.
+func repaint_hand_cards() -> void:
+	for i in range(hand_cards.size()):
+		var card := hand_cards[i]
+		card.back_texture = CardArt.back()
+		card.front_texture = CardArt.texture(hand_card_art[i])
+		card.show_front()
 
 
 ## Corner button out of the player count hand. Only up once that second hand has

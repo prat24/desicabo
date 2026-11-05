@@ -9,7 +9,6 @@ size = Vector2(132, 191)
 [node name="Card" type="Node2D" unique_id=1832272288]
 texture_filter = 4
 script = ExtResource("1_ws51j")
-back_texture = ExtResource("3_3sxif")
 
 [node name="Shadow" type="Sprite2D" parent="." unique_id=1982272290]
 modulate = Color(0, 0, 0, 0.32)

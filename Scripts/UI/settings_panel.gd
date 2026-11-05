@@ -18,6 +18,9 @@ const PANEL_TOP := 300.0
 const PANEL_MARGIN_X := 90.0
 const PANEL_PADDING := 56.0
 const GRABBER_DIAMETER := 56
+## On/off switches are drawn at the same touch size as the slider knob.
+const SWITCH_SIZE := Vector2i(112, 64)
+const SWITCH_KNOB_INSET := 7.0
 
 var backdrop: ColorRect
 var panel: Panel
@@ -73,6 +76,7 @@ func build_panel() -> void:
 	layout.add_child(make_slider_row("Music", AudioSettings.music_volume, AudioSettings.set_music_volume, format_percent))
 	layout.add_child(make_slider_row("Sound Effects", AudioSettings.sfx_volume, AudioSettings.set_sfx_volume, format_percent))
 	layout.add_child(make_slider_row("Bot Difficulty", GameSettings.bot_difficulty, GameSettings.set_bot_difficulty, format_difficulty))
+	layout.add_child(make_toggle_row("Simple Cards", GameSettings.simple_cards, GameSettings.set_simple_cards))
 
 
 ## Close the card around whatever it holds, with the same padding all round.
@@ -152,6 +156,28 @@ func make_slider_row(row_name: String, value: float, apply_value: Callable, desc
 	return row
 
 
+## One labelled on/off switch. The whole row is the button, so tapping the name
+## flips it as well as tapping the switch.
+func make_toggle_row(row_name: String, value: bool, apply_value: Callable) -> CheckButton:
+	var toggle := CheckButton.new()
+	toggle.text = row_name
+	toggle.theme = UI_THEME
+	toggle.button_pressed = value
+	toggle.focus_mode = Control.FOCUS_NONE
+	toggle.add_theme_font_size_override("font_size", 40)
+	for color_name in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color", "font_focus_color"]:
+		toggle.add_theme_color_override(color_name, UiPalette.INK)
+	# The default theme draws buttons on a dark box; here the row sits straight
+	# on the card like the labels around it.
+	var no_box := StyleBoxEmpty.new()
+	for style_name in ["normal", "hover", "pressed", "hover_pressed", "focus"]:
+		toggle.add_theme_stylebox_override(style_name, no_box)
+	toggle.add_theme_icon_override("checked", make_switch_texture(true))
+	toggle.add_theme_icon_override("unchecked", make_switch_texture(false))
+	toggle.toggled.connect(apply_value)
+	return toggle
+
+
 func format_percent(value: float) -> String:
 	return "%d%%" % roundi(value * 100.0)
 
@@ -218,6 +244,30 @@ func make_grabber_texture(diameter: int, color: Color) -> ImageTexture:
 			elif distance <= radius:
 				# Feather the last pixel so the circle edge is not jagged.
 				image.set_pixel(x, y, Color(color.r, color.g, color.b, radius - distance))
+
+	return ImageTexture.create_from_image(image)
+
+
+## A pill-shaped switch in the slider's colours: the light track when off, the
+## dark fill when on, with a knob in the card's own colour at that end.
+func make_switch_texture(on: bool) -> ImageTexture:
+	var image := Image.create_empty(SWITCH_SIZE.x, SWITCH_SIZE.y, false, Image.FORMAT_RGBA8)
+	var track_color := FILL_COLOR if on else TRACK_COLOR
+	var radius := SWITCH_SIZE.y * 0.5
+	var knob_radius := radius - SWITCH_KNOB_INSET
+	var knob_center := Vector2(SWITCH_SIZE.x - radius if on else radius, radius)
+
+	for y in range(SWITCH_SIZE.y):
+		for x in range(SWITCH_SIZE.x):
+			var point := Vector2(x + 0.5, y + 0.5)
+			# The pill is every point within `radius` of the line between the
+			# two end circles' centres; each edge is feathered over a pixel.
+			var spine := Vector2(clampf(point.x, radius, SWITCH_SIZE.x - radius), radius)
+			var track_cover := clampf(radius - point.distance_to(spine), 0.0, 1.0)
+			var knob_cover := clampf(knob_radius - point.distance_to(knob_center), 0.0, 1.0)
+			var color := track_color.lerp(UiPalette.ACCENT, knob_cover)
+			color.a = track_cover
+			image.set_pixel(x, y, color)
 
 	return ImageTexture.create_from_image(image)
 

@@ -217,6 +217,9 @@ var sfx_place: AudioStreamPlayer
 var sfx_slide: AudioStreamPlayer
 
 # ── Scene references ──────────────────────────────────────────────────────────
+## On its own canvas layer behind the board, so its anchors fill the screen
+## however tall the phone makes it.
+@onready var background: ColorRect = $BackgroundLayer/Background
 @onready var deck_sprite: Sprite2D = $DeckSprite
 @onready var center_draw_card: BoardCard = $CenterDrawCard
 @onready var discard_pile_sprite: Sprite2D = $DiscardPileSprite
@@ -243,6 +246,12 @@ func _ready() -> void:
 		my_seat = 1
 		bots = BotTable.new(player_count, my_seat, place_hands[0].cards.size(), GameSettings.bot_difficulty)
 	screen_size = get_viewport_rect().size
+	# The scene's piles are drawn in the watercolour deck; the player may have
+	# picked the simple one.
+	deck_sprite.texture = CardArt.back()
+	discard_pile_sprite.texture = CardArt.discard_pile()
+	if GameSettings.simple_cards:
+		use_plain_background()
 	seat_players()
 	layout_board_for_screen()
 	center_draw_position = center_draw_card.global_position
@@ -561,7 +570,7 @@ func make_card(rank: String, suit: String) -> Dictionary:
 	return {
 		"rank": rank,
 		"suit": suit,
-		"texture": load(CardDeck.get_card_texture_path(suit, rank)),
+		"texture": CardArt.front(suit, rank),
 	}
 
 
@@ -702,6 +711,15 @@ func fade_in_from_black() -> void:
 	var fade_tween := create_tween()
 	fade_tween.tween_property(fade, "color:a", 0.0, 0.4)
 	fade_tween.tween_callback(fade.queue_free)
+
+
+## Simple Cards plays on the plain near-black backdrop, not the swirl: the
+## background drops its shader and its blue tint and is just that colour.
+func use_plain_background() -> void:
+	background.material = null
+	background.modulate = Color.WHITE
+	background.self_modulate = Color.WHITE
+	background.color = UiPalette.BACKDROP
 
 
 func setup_board_card_shaders() -> void:

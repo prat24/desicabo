@@ -2,6 +2,10 @@
 ## from AudioSettings so each owns its own section of the settings file.
 extends Node
 
+## Simple Cards was switched on or off. Settings opens over the title screen,
+## which repaints its hand and background on this.
+signal simple_cards_changed
+
 const CONFIG_PATH := "user://settings.cfg"
 const CONFIG_SECTION := "game"
 ## Longest name shown at the table. Short enough for "<name> wins!" to fit on
@@ -14,6 +18,10 @@ const MAX_NAME_LENGTH := 12
 var bot_difficulty: float = 0.5
 ## The name the other players see online. Empty shows as "Player N".
 var player_name: String = ""
+## The original plain card faces with a navy back, in place of the watercolour
+## deck, on a plain backdrop with no swirl. Every card picture goes through
+## [CardArt], which reads this.
+var simple_cards := false
 
 
 func _ready() -> void:
@@ -22,6 +30,13 @@ func _ready() -> void:
 
 func set_bot_difficulty(value: float) -> void:
 	bot_difficulty = clampf(value, 0.0, 1.0)
+
+
+func set_simple_cards(value: bool) -> void:
+	if simple_cards == value:
+		return
+	simple_cards = value
+	simple_cards_changed.emit()
 
 
 func set_player_name(value: String) -> void:
@@ -47,6 +62,9 @@ func load_settings() -> void:
 
 	bot_difficulty = clampf(config.get_value(CONFIG_SECTION, "bot_difficulty", bot_difficulty), 0.0, 1.0)
 	player_name = clean_name(str(config.get_value(CONFIG_SECTION, "player_name", player_name)))
+	# Anything but a real true (a hand-edited or damaged file) reads as off.
+	var saved_simple_cards: Variant = config.get_value(CONFIG_SECTION, "simple_cards", simple_cards)
+	simple_cards = saved_simple_cards is bool and saved_simple_cards
 
 
 ## Called when the settings panel closes, rather than on every slider step.
@@ -57,4 +75,5 @@ func save_settings() -> void:
 	config.load(CONFIG_PATH)
 	config.set_value(CONFIG_SECTION, "bot_difficulty", bot_difficulty)
 	config.set_value(CONFIG_SECTION, "player_name", player_name)
+	config.set_value(CONFIG_SECTION, "simple_cards", simple_cards)
 	config.save(CONFIG_PATH)
