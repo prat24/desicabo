@@ -3,10 +3,7 @@
 [ext_resource type="Theme" uid="uid://cjwdgguwbjmqa" path="res://Assets/Themes/clean_ui.tres" id="1_5wsvm"]
 [ext_resource type="Script" uid="uid://bsfxfdh2jaqrs" path="res://Scripts/UI/main_menu.gd" id="2_nt9a1"]
 [ext_resource type="Material" path="res://Assets/Shaders/background_material.tres" id="3_bgmat"]
-
-[sub_resource type="SystemFont" id="SystemFont_title"]
-font_names = PackedStringArray("Avenir Next", "Avenir", "Futura", "Helvetica Neue", "Roboto")
-font_weight = 900
+[ext_resource type="FontFile" uid="uid://cr376k0nj6ydb" path="res://Assets/Fonts/Devonshire-Regular.ttf" id="4_title"]
 
 [node name="Main_menu" type="Control" unique_id=2036341202]
 layout_mode = 3
@@ -53,9 +50,9 @@ grow_horizontal = 2
 grow_vertical = 2
 theme = ExtResource("1_5wsvm")
 theme_override_colors/font_color = Color(0.043, 0.068, 0.09, 1)
-theme_override_constants/line_spacing = -60
-theme_override_fonts/font = SubResource("SystemFont_title")
-theme_override_font_sizes/font_size = 250
+theme_override_constants/line_spacing = -160
+theme_override_fonts/font = ExtResource("4_title")
+theme_override_font_sizes/font_size = 340
 text = "Desi
 Cabo"
 horizontal_alignment = 1
