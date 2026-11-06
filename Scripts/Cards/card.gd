@@ -26,6 +26,9 @@ var front_texture: Texture2D
 ## to divide the sprite's built-in scale out has to use this instead — reading
 ## the live value mid-flip asks for a card twenty-six times too big.
 var sprite_rest_scale: Vector2 = Vector2.ONE
+## Where the shadow sits while the card lies on the table. A flight drifts the
+## shadow out from here as the card lifts (see CardMotion) and back on landing.
+var shadow_rest_position: Vector2 = Vector2.ZERO
 
 @onready var sprite: Sprite2D = $Sprite2D
 @onready var shadow: Sprite2D = $Shadow
@@ -33,6 +36,8 @@ var sprite_rest_scale: Vector2 = Vector2.ONE
 
 func _ready() -> void:
 	sprite_rest_scale = sprite.scale
+	if shadow:
+		shadow_rest_position = shadow.position
 	back_texture = CardArt.back()
 	CardShader.apply(sprite, randf() * 1000.0)
 	CardShader.set_inset(sprite, CardShader.RESTING_INSET)

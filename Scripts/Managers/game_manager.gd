@@ -24,11 +24,29 @@ const CARD_COLLISION_MASK = 1
 const NORMAL_CARD_SCALE = Vector2(1.05, 1.05)
 ## How much a hovered board card swells past whatever size it is resting at.
 const HOVER_SCALE_MULTIPLIER = 1.05
-const SNAP_TIME = 0.18
-const DEAL_FLY_TIME = 0.28
-const DEAL_STAGGER_TIME = 0.07
-const DISCARD_FLY_TIME = 0.34
-const SWAP_FLY_TIME = 0.4
+## A card let go short of anywhere sliding back to where it rests.
+const SNAP_TIME = 0.24
+## Card flights (see CardMotion) ease out along one curve: these are the whole
+## flight including its settle, and a card is most of the way there by half
+## time. Quick, but long enough that the glide in reads as smooth, not a snap.
+##
+## A card dropped on a slot or the pile, flying the rest of the way in.
+const PLACE_FLY_TIME = 0.34
+## One dealt card's flight from the deck to its slot. The next card leaves
+## DEAL_STAGGER_TIME after it, long before it lands, so the deal reads as one
+## quick stream rather than a card, a stop, and another card.
+const DEAL_FLY_TIME = 0.42
+const DEAL_STAGGER_TIME = 0.1
+## The drawn card's flight out of the deck to where the turn plays it from.
+const DRAW_FLY_TIME = 0.42
+## How far through the draw flight the card starts turning face up, so the flip
+## lands as it settles instead of starting only once it has stopped.
+const DRAW_FLIP_LEAD = 0.3
+const DISCARD_FLY_TIME = 0.38
+const SWAP_FLY_TIME = 0.5
+## How far the two cards of a swap bow apart, as a fraction of the distance, so
+## they pass beside each other rather than through each other.
+const SWAP_ARC = 0.1
 ## Horizontal offset of the deck and discard slots from the screen center. Far
 ## enough out that the hand-sized drawn card fits between the two piles.
 const BOARD_SLOT_OFFSET_X = 375.0
@@ -107,9 +125,9 @@ const UI_THEME = preload("res://Assets/Themes/clean_ui.tres")
 @export_range(0.1, 0.8, 0.01) var initial_deal_fly_time: float = DEAL_FLY_TIME
 @export_range(0.0, 0.3, 0.01) var initial_deal_stagger: float = DEAL_STAGGER_TIME
 @export_range(0.0, 1.0, 0.01) var pre_game_dim_alpha: float = 0.35
-@export_range(0.05, 1.5, 0.01) var player_card_flip_time: float = 0.24
+@export_range(0.05, 1.5, 0.01) var player_card_flip_time: float = 0.28
 ## Reveals flip cards up much faster than they flip back down.
-@export_range(0.05, 0.5, 0.01) var quick_flip_up_time: float = 0.12
+@export_range(0.05, 0.5, 0.01) var quick_flip_up_time: float = 0.16
 @export_range(0.5, 10.0, 0.1) var reveal_prompt_time: float = 5.0
 ## Quick "Player X's turn" flash at the start of every turn.
 @export_range(0.2, 5.0, 0.1) var turn_prompt_time: float = 1.5
@@ -220,7 +238,7 @@ var sfx_slide: AudioStreamPlayer
 ## On its own canvas layer behind the board, so its anchors fill the screen
 ## however tall the phone makes it.
 @onready var background: ColorRect = $BackgroundLayer/Background
-@onready var deck_sprite: Sprite2D = $DeckSprite
+@onready var deck_sprite: DeckPile = $DeckSprite
 @onready var center_draw_card: BoardCard = $CenterDrawCard
 @onready var discard_pile_sprite: Sprite2D = $DiscardPileSprite
 @onready var discard_top_card: BoardCard = $DiscardTopCard
@@ -727,6 +745,8 @@ func setup_board_card_shaders() -> void:
 	CardShader.apply(discard_pile_sprite, 24.0)
 	CardShader.set_inset(deck_sprite, 0.03)
 	CardShader.set_inset(discard_pile_sprite, 0.03)
+	# The pile's stack is drawn plainly and sized to the shaded top card.
+	deck_sprite.refresh()
 
 
 func setup_audio() -> void:
@@ -739,8 +759,8 @@ func setup_audio() -> void:
 ## The two card cues. `slide` goes on the frame a card starts moving, `place`
 ## on the frame it lands — both ride on the tween they belong to, never on a
 ## separate timer, so the audio cannot drift from the animation. A landing is
-## the frame the card reads as arrived, which an ease-out reaches well before
-## its last frame, so `place` goes through cue_place_on_landing().
+## the frame the card reads as arrived, which a flight reaches well before its
+## last frame, so `place` goes through cue_place_on_landing().
 func play_place_sound() -> void:
 	sfx_place.play()
 
@@ -749,10 +769,10 @@ func play_slide_sound() -> void:
 	sfx_slide.play()
 
 
-## Every in-game flight is a cubic tween; this puts the place cue on `tween`
-## where its `duration`-long flight lands. Add the flight to `tween` first.
-func cue_place_on_landing(tween: Tween, duration: float, ease_type: Tween.EaseType) -> void:
-	CardSfx.cue_on_landing(tween, play_place_sound, duration, Tween.TRANS_CUBIC, ease_type)
+## Every in-game flight is a CardMotion curve; this puts the place cue on
+## `tween` where its `duration`-long flight lands. Add the flight first.
+func cue_place_on_landing(tween: Tween, duration: float) -> void:
+	CardMotion.cue_on_landing(tween, play_place_sound, duration)
 
 
 func deal_initial_hands_animated() -> void:
@@ -777,23 +797,40 @@ func deal_initial_hands_animated() -> void:
 
 func step_prepare_deal() -> void:
 	turn_state = TurnState.DEALING
+	deck_sprite.set_cards_left(DeckPile.FULL_DECK)
 	var deck_pos: Vector2 = deck_sprite.global_position
 	for hand in get_all_hands():
 		hand.arrange_cards()
 		hand.stack_cards_at_deck(deck_pos, deck_sprite.rotation_degrees, deck_sprite.scale)
 
 
+## Sends one card on its way and moves on after the stagger, not once it lands,
+## so several cards are in the air at once. Only the round's very last card is
+## waited out — whatever follows the deal starts with every hand settled. Each
+## device works out "last" for itself, so the steps on the wire are unchanged.
 func step_deal_card(player: int, slot: int, rank: String, suit: String) -> void:
-	await get_hand(player).animate_deal_card(
+	take_from_deck_pile()
+	var hand := get_hand(player)
+	var flight: Tween = hand.animate_deal_card(
 		slot,
 		make_card(rank, suit),
 		deck_sprite.global_position,
 		initial_deal_fly_time,
 		deck_sprite.scale,
-		deck_sprite.rotation_degrees,
+		deck_sprite.global_rotation_degrees,
 		play_place_sound
 	)
-	await pause(initial_deal_stagger)
+	if player == player_count and slot == hand.cards.size() - 1:
+		await flight.finished
+	else:
+		await pause(initial_deal_stagger)
+
+
+## One card leaves the draw pile, so its stack thins. Counted per device from
+## the deal and draw steps every device runs, so clients — who are never sent
+## the deck itself — show the same thickness as the host.
+func take_from_deck_pile() -> void:
+	deck_sprite.set_cards_left(deck_sprite.cards_left - 1)
 
 
 ## Every player peeks at their hand before Player 1's first turn; a prompt
@@ -1482,8 +1519,7 @@ func reveal_hand_to(player: int, viewer: int) -> void:
 
 
 func step_jumble_hand(player: int, order: Array) -> void:
-	play_slide_sound()
-	await get_hand(player).jumble_cards(order, play_place_sound)
+	await get_hand(player).jumble_cards(order, play_place_sound, play_slide_sound)
 
 
 ## A shuffled slot order for the jumble, worked out once by the host so every
@@ -1654,6 +1690,7 @@ func is_power_rank(rank: String) -> bool:
 
 
 func step_draw_card(rank: String, suit: String) -> void:
+	take_from_deck_pile()
 	var drawn := make_card(rank, suit)
 	center_draw_card.setup_card(
 		drawn["rank"],
@@ -1664,10 +1701,11 @@ func step_draw_card(rank: String, suit: String) -> void:
 	center_draw_card.z_index = FOCUSED_DRAW_CARD_Z
 	center_draw_card.can_drag = false
 	center_draw_card.global_position = deck_sprite.global_position
-	center_draw_card.rotation_degrees = deck_sprite.rotation_degrees
+	center_draw_card.global_rotation = deck_sprite.global_rotation
 	# The card's child sprite is pre-scaled, so divide that out to spawn at
 	# exactly the deck pile's on-screen size.
 	center_draw_card.scale = deck_sprite.scale / center_draw_card.sprite_rest_scale.x
+	center_draw_card.shadow.position = center_draw_card.shadow_rest_position
 
 	# In 3-player mode the drawn card turns to face whoever's turn it is. Four
 	# players keep the two upright hands' card upright — it lands beside the
@@ -1679,20 +1717,19 @@ func step_draw_card(rank: String, suit: String) -> void:
 
 	play_slide_sound()
 	var move_tween := create_tween().set_parallel(true)
-	move_tween.tween_property(center_draw_card, "global_position", get_draw_card_rest_position(), initial_deal_fly_time) \
-		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	# Grows out of the pile to hand size — it is a card in play now, not one
 	# sitting on the board.
-	move_tween.tween_property(center_draw_card, "scale", hand_card_scale(), initial_deal_fly_time) \
-		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	move_tween.tween_property(center_draw_card, "rotation_degrees", target_rotation, initial_deal_fly_time) \
-		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	await move_tween.finished
+	CardMotion.fly(move_tween, center_draw_card, get_draw_card_rest_position(),
+		deg_to_rad(target_rotation), hand_card_scale(), DRAW_FLY_TIME)
 
 	# A card this device may not see stays face down: the players who are only
-	# watching see it fly out and land, and that is all they learn.
+	# watching see it fly out and land, and that is all they learn. One it may
+	# see turns over as it comes in to land, not after it has stopped.
 	if drawn["texture"] != null:
+		await pause(DRAW_FLY_TIME * DRAW_FLIP_LEAD)
 		await center_draw_card.flip_to_front(is_my_turn())
+	if move_tween.is_running():
+		await move_tween.finished
 
 
 ## Where the drawn card rests this turn. Once the board is a sideways column,
@@ -1727,14 +1764,9 @@ func step_discard_drawn(rank: String, suit: String) -> void:
 	turn_over_drawn_card(rank, suit)
 
 	var move_tween := create_tween().set_parallel(true)
-	move_tween.tween_property(center_draw_card, "global_position", discard_pile_position, SNAP_TIME) \
-		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
-	move_tween.tween_property(center_draw_card, "rotation_degrees", discard_pile_sprite.rotation_degrees, SNAP_TIME) \
-		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	# Back down to the pile's size on the way out of play.
-	move_tween.tween_property(center_draw_card, "scale", NORMAL_CARD_SCALE, SNAP_TIME) \
-		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
-	cue_place_on_landing(move_tween, SNAP_TIME, Tween.EASE_IN_OUT)
+	fly_board_card(move_tween, center_draw_card, discard_pile_position, discard_pile_sprite.global_rotation,
+		NORMAL_CARD_SCALE, PLACE_FLY_TIME)
 	await move_tween.finished
 
 	place_card_on_discard(center_draw_card)
@@ -1783,15 +1815,9 @@ func step_swap_drawn_into_slot(
 
 	var player_card: PlayerCard = get_hand(player).cards[slot]
 
-	# Grow to the hand's card size on the way in, so the card the player let go
-	# of is exactly the card that ends up in the slot.
-	var move_tween := create_tween().set_parallel(true)
-	move_tween.tween_property(center_draw_card, "global_position", player_card.global_position, SNAP_TIME) \
-		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
-	move_tween.tween_property(center_draw_card, "scale", player_card.resting_scale, SNAP_TIME) \
-		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
-	cue_place_on_landing(move_tween, SNAP_TIME, Tween.EASE_IN_OUT)
-	await move_tween.finished
+	# Lands exactly on the slot's card as it looks right now — its spot, its
+	# angle in the fan and its size — so the swap to it is invisible.
+	await fly_into_slot(center_draw_card, player_card)
 
 	var incoming := make_card(rank, suit)
 	player_card.setup_card(
@@ -1802,11 +1828,7 @@ func step_swap_drawn_into_slot(
 	player_card.set_drag_hovered(false)
 	center_draw_card.visible = false
 
-	await animate_card_to_discard(
-		make_card(replaced_rank, replaced_suit),
-		player_card.global_position,
-		player_card.resting_scale
-	)
+	await animate_card_to_discard(make_card(replaced_rank, replaced_suit), player_card)
 
 
 func return_center_draw_card() -> void:
@@ -1875,13 +1897,7 @@ func step_take_discard_into_slot(
 	var old_hand_data := make_card(replaced_rank, replaced_suit)
 	var taken_data := make_card(taken_rank, taken_suit)
 
-	var move_tween := create_tween().set_parallel(true)
-	move_tween.tween_property(discard_top_card, "global_position", player_card.global_position, SNAP_TIME) \
-		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
-	move_tween.tween_property(discard_top_card, "scale", player_card.resting_scale, SNAP_TIME) \
-		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
-	cue_place_on_landing(move_tween, SNAP_TIME, Tween.EASE_IN_OUT)
-	await move_tween.finished
+	await fly_into_slot(discard_top_card, player_card)
 
 	player_card.setup_card(taken_data["rank"], taken_data["suit"], taken_data["texture"])
 	player_card.set_drag_hovered(false)
@@ -1890,18 +1906,13 @@ func step_take_discard_into_slot(
 	turn_over_drawn_card(drawn_rank, drawn_suit)
 	play_slide_sound()
 	var center_tween := create_tween().set_parallel(true)
-	center_tween.tween_property(center_draw_card, "global_position", discard_pile_position, DISCARD_FLY_TIME) \
-		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
-	center_tween.tween_property(center_draw_card, "rotation_degrees", discard_pile_sprite.rotation_degrees, DISCARD_FLY_TIME) \
-		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
-	center_tween.tween_property(center_draw_card, "scale", NORMAL_CARD_SCALE, DISCARD_FLY_TIME) \
-		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
-	cue_place_on_landing(center_tween, DISCARD_FLY_TIME, Tween.EASE_IN_OUT)
+	fly_board_card(center_tween, center_draw_card, discard_pile_position, discard_pile_sprite.global_rotation,
+		NORMAL_CARD_SCALE, DISCARD_FLY_TIME)
 	await center_tween.finished
 	place_card_on_discard(center_draw_card)
 	center_draw_card.visible = false
 
-	await animate_card_to_discard(old_hand_data, player_card.global_position, player_card.resting_scale)
+	await animate_card_to_discard(old_hand_data, player_card)
 
 
 func return_discard_card() -> void:
@@ -1928,25 +1939,52 @@ func step_return_discard() -> void:
 	turn_state = TurnState.WAITING_FOR_DROP
 
 
-## `start_scale` is the size the card had where it left — a hand's card size for
-## the usual case — so it shrinks to the board's size as it flies to the pile.
-func animate_card_to_discard(card_data: Dictionary, start_position: Vector2, start_scale: Vector2) -> void:
+## A board card's flight, landing with the place cue.
+func fly_board_card(tween: Tween, card: BoardCard, to_position: Vector2, to_rotation: float,
+		to_scale: Vector2, duration: float) -> void:
+	# A hover or pick-up swell may still be running from the drag; the flight
+	# owns the card's size from here.
+	if card.hover_tween:
+		card.hover_tween.kill()
+	CardMotion.fly(tween, card, to_position, to_rotation, to_scale, duration)
+	cue_place_on_landing(tween, duration)
+
+
+## Fly a board card into `slot_card`'s place in a hand, landing as an exact
+## match for how that card looks this moment — spot, fan angle and size, so a
+## lifted hover lands lifted and then settles with the hand. Cards in a hand lie
+## face down, so one that is face up turns over on the way in rather than
+## blinking to its back as it lands.
+func fly_into_slot(card: BoardCard, slot_card: PlayerCard) -> void:
+	var move_tween := create_tween().set_parallel(true)
+	fly_board_card(move_tween, card, slot_card.global_position, slot_card.global_rotation,
+		slot_card.scale, PLACE_FLY_TIME)
+	if card.sprite.texture == card.front_texture and card.front_texture != null:
+		# A shade quicker than the flight, so it is face down as it touches.
+		card.animate_flip(false, PLACE_FLY_TIME * 0.7)
+	await move_tween.finished
+
+
+## Throw `card_data` out of the hand slot `from_card` sits in onto the pile. The
+## flying card starts as an exact stand-in for that slot's card — its spot, its
+## angle in the fan, its size — then shrinks to the board's size, turns square
+## with the pile and flips face up on the way.
+func animate_card_to_discard(card_data: Dictionary, from_card: PlayerCard) -> void:
 	flying_card.visible = true
 	flying_card.setup_card(
 		card_data["rank"],
 		card_data["suit"],
 		card_data["texture"]
 	)
-	flying_card.global_position = start_position
-	flying_card.scale = start_scale
+	flying_card.global_position = from_card.global_position
+	flying_card.global_rotation = from_card.global_rotation
+	flying_card.scale = from_card.scale
+	flying_card.shadow.position = flying_card.shadow_rest_position
 	flying_card.z_index = FLYING_CARD_Z
 
 	var move_tween := create_tween().set_parallel(true)
-	move_tween.tween_property(flying_card, "global_position", discard_pile_position, DISCARD_FLY_TIME) \
-		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
-	move_tween.tween_property(flying_card, "scale", NORMAL_CARD_SCALE, DISCARD_FLY_TIME) \
-		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
-	cue_place_on_landing(move_tween, DISCARD_FLY_TIME, Tween.EASE_IN_OUT)
+	fly_board_card(move_tween, flying_card, discard_pile_position, discard_pile_sprite.global_rotation,
+		NORMAL_CARD_SCALE, DISCARD_FLY_TIME)
 	flying_card.flip_to_front(false)
 
 	await move_tween.finished
@@ -1961,7 +1999,10 @@ func place_card_on_discard(card: BoardCard) -> void:
 	discard_top_card.show_front()
 	discard_top_card.can_drag = false
 	discard_top_card.global_position = discard_pile_position
+	# Taking it into a hand turned it to that slot's angle; square it back up.
+	discard_top_card.global_rotation = discard_pile_sprite.global_rotation
 	discard_top_card.scale = NORMAL_CARD_SCALE
+	discard_top_card.shadow.position = discard_top_card.shadow_rest_position
 	discard_top_card.z_index = 5
 
 
@@ -2276,13 +2317,18 @@ func net_request_seven_skip() -> void:
 
 
 ## Fly two cards to each other's slots, then swap their data and snap back.
-## Both cards are face-down, so the snap-back is invisible to the players.
+## Each card lands exactly where the other one rests — its spot, its angle in
+## that fan, its size — turning to it in the air, so a card crossing to a hand
+## that faces another way arrives already sitting right. Both cards are face
+## down and land as exact copies of each other, so the snap-back is invisible.
 func animate_swap_player_cards(first: PlayerCard, second: PlayerCard) -> void:
 	var first_data := first.to_card_data()
 	var second_data := second.to_card_data()
 
-	var first_global := first.global_position
-	var second_global := second.global_position
+	var first_hand := first.get_parent() as PlayerHand
+	var second_hand := second.get_parent() as PlayerHand
+	var first_slot := first_hand.cards.find(first)
+	var second_slot := second_hand.cards.find(second)
 
 	# The lift from selecting these two is still tweening their position and
 	# scale; leaving it running would fight the flight for its first frames.
@@ -2293,12 +2339,16 @@ func animate_swap_player_cards(first: PlayerCard, second: PlayerCard) -> void:
 	second.z_index = RAISED_HAND_Z_INDEX
 
 	play_slide_sound()
+	# Both bow the same way, so they pass beside each other mid-table rather
+	# than through each other.
 	var swap_tween := create_tween().set_parallel(true)
-	swap_tween.tween_property(first, "global_position", second_global, SWAP_FLY_TIME) \
-		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
-	swap_tween.tween_property(second, "global_position", first_global, SWAP_FLY_TIME) \
-		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
-	cue_place_on_landing(swap_tween, SWAP_FLY_TIME, Tween.EASE_IN_OUT)
+	CardMotion.fly(swap_tween, first, second_hand.slot_global_position(second_slot),
+		second_hand.slot_global_rotation(second_slot), second.resting_scale,
+		SWAP_FLY_TIME, SWAP_ARC)
+	CardMotion.fly(swap_tween, second, first_hand.slot_global_position(first_slot),
+		first_hand.slot_global_rotation(first_slot), first.resting_scale,
+		SWAP_FLY_TIME, SWAP_ARC)
+	cue_place_on_landing(swap_tween, SWAP_FLY_TIME)
 	await swap_tween.finished
 
 	first.setup_card(second_data["rank"], second_data["suit"], second_data["texture"])

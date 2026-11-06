@@ -73,7 +73,7 @@ func _on_area_2d_mouse_exited() -> void:
 func flip_to_front(enable_drag_after := true) -> void:
 	can_drag = false
 	show_back()
-	await animate_flip(true, 0.34)
+	await animate_flip(true, 0.3)
 	can_drag = enable_drag_after
 
 

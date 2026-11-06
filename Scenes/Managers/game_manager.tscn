@@ -6,6 +6,7 @@
 [ext_resource type="Material" path="res://Assets/Shaders/background_material.tres" id="3_bgmat"]
 [ext_resource type="Texture2D" uid="uid://2isylkgo0dnu" path="res://Assets/Art/PNG/Cards/cardBack_main.png" id="4_j1mdm"]
 [ext_resource type="Texture2D" uid="uid://nugooig5tlb" path="res://Assets/Art/PNG/Cards/discard_pile.png" id="6_xbfc7"]
+[ext_resource type="Script" path="res://Scripts/Cards/deck_pile.gd" id="7_deckpile"]
 
 [node name="GameManager" type="Node2D" unique_id=1949778435]
 script = ExtResource("1_heafe")
@@ -50,6 +51,7 @@ texture_filter = 4
 position = Vector2(165, 960)
 scale = Vector2(0.7, 0.7)
 texture = ExtResource("4_j1mdm")
+script = ExtResource("7_deckpile")
 
 [node name="CenterDrawCard" parent="." unique_id=1108670356 instance=ExtResource("2_il670")]
 z_index = 1

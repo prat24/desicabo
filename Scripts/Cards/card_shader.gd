@@ -23,6 +23,22 @@ static func card_half_size(sprite: Sprite2D) -> Vector2:
 	return rect.size * sprite.scale * 0.5
 
 
+## How big the shader draws a flat card relative to the sprite's own size. It
+## grows the quad to leave room for tilting and then maps the texture in with
+## perspective, so the untilted card comes out a touch smaller than the plain
+## sprite would be: (1 + t·(1 − inset)) / (1 + t), with t = tan(fov / 2).
+## Anything drawn plainly that has to line up with a shaded card — the deck
+## pile's stack — scales itself by this.
+static func flat_card_scale(sprite: Sprite2D) -> float:
+	var mat := get_material(sprite)
+	if mat == null:
+		return 1.0
+	var fov: float = mat.get_shader_parameter("fov")
+	var inset: float = mat.get_shader_parameter("inset")
+	var t: float = tan(deg_to_rad(fov) * 0.5)
+	return (1.0 + t * (1.0 - inset)) / (1.0 + t)
+
+
 static func set_tilt(sprite: Sprite2D, local_pos: Vector2, intensity: float = 12.0) -> void:
 	var mat := get_material(sprite)
 	if mat == null:
