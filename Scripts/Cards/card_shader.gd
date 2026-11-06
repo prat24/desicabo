@@ -6,6 +6,9 @@ const MATERIAL := preload("res://Assets/Shaders/card_fov_material.tres")
 ## Inset every card rests at; hover/drag states animate it to 0.
 const RESTING_INSET := 0.02
 
+## The pointer position last sent to the shaders (see update_pointer()).
+static var _pointer_screen_pos := Vector2.INF
+
 static func apply(sprite: Sprite2D, rand_seed: float = 0.0) -> ShaderMaterial:
 	var mat := MATERIAL.duplicate() as ShaderMaterial
 	mat.set_shader_parameter("rand_seed", rand_seed)
@@ -85,3 +88,14 @@ static func tween_inset(owner: Node, sprite: Sprite2D, target: float, duration: 
 		target,
 		duration
 	).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+
+
+## Hand the pointer's screen position to every card's hover tilt, which reads
+## it from one global uniform. Called each frame by whichever scene is up, it
+## only touches the uniform when the pointer has actually moved.
+static func update_pointer(viewport: Viewport) -> void:
+	var pointer_position := viewport.get_mouse_position()
+	if pointer_position == _pointer_screen_pos:
+		return
+	_pointer_screen_pos = pointer_position
+	RenderingServer.global_shader_parameter_set("mouse_screen_pos", pointer_position)

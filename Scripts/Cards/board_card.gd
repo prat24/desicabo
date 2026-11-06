@@ -12,21 +12,38 @@ var can_drag := false
 var is_pointer_inside := false
 var is_hovered := false
 var hover_tween: Tween
+## The shader is tilted toward the pointer, so letting go has to level it.
+## Kept so a resting card is not re-levelled — a shader update — every frame.
+var is_tilted := false
 
 
 func _init() -> void:
 	tilt_intensity = 14.0
 
 
+## A hidden card has nothing to hover or tilt, so it sits out the frame loop.
+## The flying card and the pile's top card spend most of the game hidden.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_VISIBILITY_CHANGED:
+		set_process(is_visible_in_tree())
+
+
 func _process(_delta: float) -> void:
 	update_hover()
 
-	var pointer_near_card: bool = can_drag \
-		and get_global_mouse_position().distance_to(global_position) < 200.0
+	var mouse_position := get_global_mouse_position()
+	var pointer_near_card: bool = can_drag and mouse_position.distance_to(global_position) < 200.0
 	if TapGesture.is_pointer_hovering() and (is_hovered or pointer_near_card):
-		update_shader_tilt(get_global_mouse_position())
-	else:
+		update_shader_tilt(mouse_position)
+	elif is_tilted:
 		CardShader.reset_tilt(sprite)
+		is_tilted = false
+
+
+## The game tilts a card it is dragging too, so the flag is kept here.
+func update_shader_tilt(global_mouse: Vector2) -> void:
+	super(global_mouse)
+	is_tilted = true
 
 
 ## A hover needs the pointer inside the card *and* actually pointing at it. A

@@ -104,7 +104,7 @@ const FADE_OVERLAY_Z := 500
 const FADE_IN_TIME := 0.4
 const FADE_OUT_TIME := 0.35
 
-@onready var swirl_background: ColorRect = $SwirlBackground
+@onready var swirl_background: SwirlBackground = $SwirlBackground
 @onready var solid_background: ColorRect = $Background
 @onready var card_pile: Node2D = $CardPile
 @onready var title_label: Label = $TitleLabel
@@ -175,6 +175,8 @@ func run_intro() -> void:
 	await fly_in_hand_cards(MAIN_HAND)
 	fade_background_to_card_look()
 	input_enabled = true
+	# The menu is idle from here, so the deck loads now rather than in the game.
+	CardArt.warm_up(get_tree())
 
 
 ## The title swells against the card pile, snaps back with a boom, turns white
@@ -278,6 +280,8 @@ func fade_background_to_card_look() -> void:
 func on_simple_cards_changed() -> void:
 	repaint_hand_cards()
 	fade_background_to_card_look()
+	# Every picture changed with the look, so its deck loads ahead too.
+	CardArt.warm_up(get_tree())
 
 
 ## Smooth arrival (from launch or from a finished game): start black, fade in
@@ -304,7 +308,7 @@ func _process(_delta: float) -> void:
 	# The card shader's hover tilt reads this global uniform. The game updates
 	# it every frame; without it here the menu cards tilt toward a stale point
 	# far off the card and spin wildly on hover.
-	RenderingServer.global_shader_parameter_set("mouse_screen_pos", get_viewport().get_mouse_position())
+	CardShader.update_pointer(get_viewport())
 
 	if not input_enabled or is_starting_game:
 		return

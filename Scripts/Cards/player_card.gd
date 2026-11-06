@@ -28,7 +28,6 @@ func _init() -> void:
 
 func _ready() -> void:
 	super()
-	add_to_group("player_cards")
 	resting_position = position
 	resting_scale = scale
 	resting_z_index = z_index

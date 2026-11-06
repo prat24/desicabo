@@ -15,10 +15,10 @@ dest_files=["res://.godot/imported/cardClubs6.png-1670f20ad6e71259cec5130ace149f
 
 [params]
 
-compress/mode=1
+compress/mode=4
 compress/high_quality=false
 compress/lossy_quality=0.9
-compress/uastc_level=0
+compress/uastc_level=2
 compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
 compress/normal_map=0

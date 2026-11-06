@@ -237,7 +237,7 @@ var sfx_slide: AudioStreamPlayer
 # ── Scene references ──────────────────────────────────────────────────────────
 ## On its own canvas layer behind the board, so its anchors fill the screen
 ## however tall the phone makes it.
-@onready var background: ColorRect = $BackgroundLayer/Background
+@onready var background: SwirlBackground = $BackgroundLayer/Background
 @onready var deck_sprite: DeckPile = $DeckSprite
 @onready var center_draw_card: BoardCard = $CenterDrawCard
 @onready var discard_pile_sprite: Sprite2D = $DiscardPileSprite
@@ -264,6 +264,11 @@ func _ready() -> void:
 		my_seat = 1
 		bots = BotTable.new(player_count, my_seat, place_hands[0].cards.size(), GameSettings.bot_difficulty)
 	screen_size = get_viewport_rect().size
+	# Every face is loaded before play, not the first time it turns over: that
+	# load is slow enough to stall the card's flight. The title screen has
+	# usually loaded them all already. A client never builds the deck, so
+	# without this it loaded each face mid-animation.
+	CardArt.load_table_art()
 	# The scene's piles are drawn in the watercolour deck; the player may have
 	# picked the simple one.
 	deck_sprite.texture = CardArt.back()
@@ -731,13 +736,9 @@ func fade_in_from_black() -> void:
 	fade_tween.tween_callback(fade.queue_free)
 
 
-## Simple Cards plays on the plain near-black backdrop, not the swirl: the
-## background drops its shader and its blue tint and is just that colour.
+## Simple Cards plays on the plain near-black backdrop, not the swirl.
 func use_plain_background() -> void:
-	background.material = null
-	background.modulate = Color.WHITE
-	background.self_modulate = Color.WHITE
-	background.color = UiPalette.BACKDROP
+	background.show_plain(UiPalette.BACKDROP)
 
 
 func setup_board_card_shaders() -> void:
@@ -1035,7 +1036,7 @@ func dim_for_hand_reveal(active_hand: PlayerHand, dimmed: bool) -> void:
 
 
 func _process(_delta: float) -> void:
-	RenderingServer.global_shader_parameter_set("mouse_screen_pos", get_viewport().get_mouse_position())
+	CardShader.update_pointer(get_viewport())
 
 	if turn_state == TurnState.SPECIAL_7:
 		update_seven_hover()
@@ -1359,11 +1360,10 @@ func get_best_overlapped_player_card() -> PlayerCard:
 	var best_player_card: PlayerCard
 	var best_overlap_area := 0.0
 
-	for player_card in get_tree().get_nodes_in_group("player_cards"):
+	for player_card in get_active_hand().cards:
 		# Hands that are not in play are hidden, not removed — an undealt card
 		# has no face, and swapping onto one puts a null texture on the discard.
-		if player_card is PlayerCard and player_card.player_id == current_player \
-				and player_card.is_visible_in_tree():
+		if player_card.is_visible_in_tree():
 			var overlap_area := get_overlap_area(dragged_card_rect, player_card.get_global_rect())
 			if overlap_area > best_overlap_area:
 				best_overlap_area = overlap_area
