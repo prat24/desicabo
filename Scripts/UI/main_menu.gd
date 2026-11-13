@@ -16,7 +16,7 @@ const AIR_RISE_SOUND := preload("res://Assets/Sounds/air rise.mp3")
 ## silence, so the boom landed well after the title snapped back.
 const BOOM_SOUND := preload("res://Assets/Sounds/boom.wav")
 const TITLE_SFX_VOLUME_DB := -20.0
-## Simple Cards are as dark as the title, so over that pile the title gets a
+## The Simple Cards back is too dark and busy for the title, so over that pile it gets a
 ## white outline, shown only where a card is behind it.
 const TITLE_REVEAL_SHADER := preload("res://Assets/Shaders/title_reveal.gdshader")
 const TITLE_OUTLINE_SIZE := 14
@@ -209,7 +209,7 @@ func run_title_impact() -> void:
 	await blow_away_title_cards()
 
 
-## The dark title disappears against the navy Simple Cards, so it gets a white
+## The dark title gets lost on the red Simple Cards back, so it gets a white
 ## outline that title_reveal.gdshader draws only over the cards themselves.
 func outline_title_for_dark_cards() -> void:
 	var reveal := ShaderMaterial.new()

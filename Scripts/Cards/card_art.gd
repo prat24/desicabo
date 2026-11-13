@@ -1,6 +1,6 @@
 ## CardArt — where every card picture comes from. The game has two looks: the
 ## watercolour deck, and Simple Cards from Settings (the original plain faces
-## with a navy swirl back). The simple set copies the watercolour folders under
+## with a muted red patterned back). The simple set copies the watercolour folders under
 ## Simple/, file for file and at the same 420x570 size, so picking a look only
 ## picks a folder: card sizes and layout never change with it.
 ##

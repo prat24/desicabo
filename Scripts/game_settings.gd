@@ -18,7 +18,7 @@ const MAX_NAME_LENGTH := 12
 var bot_difficulty: float = 0.5
 ## The name the other players see online. Empty shows as "Player N".
 var player_name: String = ""
-## The original plain card faces with a navy back, in place of the watercolour
+## The original plain card faces with a muted red back, in place of the watercolour
 ## deck, on a plain backdrop with no swirl. Every card picture goes through
 ## [CardArt], which reads this.
 var simple_cards := false
